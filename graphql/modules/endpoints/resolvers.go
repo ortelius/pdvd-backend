@@ -49,17 +49,17 @@ func ResolveEndpointDetails(db database.DBConnection, endpointName string) (map[
 							RETURN s
 					)[0]
 					
-					LET release = (
+					LET releaseDoc = (
 						FOR r IN release
 							FILTER r.name == latestSync.release_name AND r.version == latestSync.release_version
 							LIMIT 1
 							RETURN r
 					)[0]
 					
-					FILTER release != null
+					FILTER releaseDoc != null
 					
 					LET sbomData = (
-						FOR s IN 1..1 OUTBOUND release release2sbom
+						FOR s IN 1..1 OUTBOUND releaseDoc release2sbom
 							LIMIT 1
 							RETURN { id: s._id }
 					)[0]
@@ -241,9 +241,9 @@ func ResolveEndpointDetails(db database.DBConnection, endpointName string) (map[
 					LET vulnerabilityCountDelta = prevVulnCount != null ? (currentVulnCount - prevVulnCount) : null
 					
 					RETURN {
-						release_name: release.name,
-						release_version: release.version,
-						openssf_scorecard_score: release.openssf_scorecard_score,
+						release_name: releaseDoc.name,
+						release_version: releaseDoc.version,
+						openssf_scorecard_score: releaseDoc.openssf_scorecard_score,
 						dependency_count: LENGTH(dependencyCount),
 						last_sync: latestSync.synced_at,
 						vulnerability_count: currentVulnCount,
@@ -348,15 +348,15 @@ func ResolveEndpointDetails(db database.DBConnection, endpointName string) (map[
 	}
 
 	type EndpointDetailsResult struct {
-		EndpointName           string                 `json:"endpoint_name"`
-		EndpointURL            string                 `json:"endpoint_url"`
-		EndpointType           string                 `json:"endpoint_type"`
-		Environment            string                 `json:"environment"`
-		Status                 string                 `json:"status"`
-		LastSync               string                 `json:"last_sync"`
-		TotalVulnerabilities   map[string]int         `json:"total_vulnerabilities"`
-		VulnerabilityCountDelta int                   `json:"vulnerability_count_delta"`
-		Releases               []ReleaseData          `json:"releases"`
+		EndpointName            string         `json:"endpoint_name"`
+		EndpointURL             string         `json:"endpoint_url"`
+		EndpointType            string         `json:"endpoint_type"`
+		Environment             string         `json:"environment"`
+		Status                  string         `json:"status"`
+		LastSync                string         `json:"last_sync"`
+		TotalVulnerabilities    map[string]int `json:"total_vulnerabilities"`
+		VulnerabilityCountDelta int            `json:"vulnerability_count_delta"`
+		Releases                []ReleaseData  `json:"releases"`
 	}
 
 	if !cursor.HasMore() {
