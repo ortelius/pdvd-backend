@@ -10,6 +10,7 @@ require (
 	github.com/cenkalti/backoff v2.2.1+incompatible
 	github.com/gofiber/fiber/v2 v2.52.10
 	github.com/google/osv-scanner v1.9.2
+	github.com/google/osv-scanner/v2 v2.3.0
 	github.com/graphql-go/graphql v0.8.1
 	github.com/package-url/packageurl-go v0.1.3
 	go.uber.org/zap v1.27.1
