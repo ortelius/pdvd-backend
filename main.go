@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/arangodb/go-driver/v2/arangodb"
@@ -654,58 +653,35 @@ func PostReleaseWithSBOM(c *fiber.Ctx) error {
 	})
 }
 
-// PostSyncWithEndpoint handles POST requests for syncing a release to an endpoint
+// PostSyncWithEndpoint handles POST requests for syncing multiple releases (with optional SBOMs) to an endpoint
+// Creates/updates releases, processes SBOMs, and creates a sync snapshot with a single timestamp
 func PostSyncWithEndpoint(c *fiber.Ctx) error {
 	var req model.SyncWithEndpoint
 
 	// Parse request body
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(SyncResponse{
-			Success: false,
-			Message: "Invalid request body: " + err.Error(),
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"success": false,
+			"message": "Invalid request body: " + err.Error(),
 		})
 	}
 
-	// Clean the version to match how it's stored (removes branch prefixes)
-	req.ReleaseVersion = util.CleanVersion(req.ReleaseVersion)
+	// Validate required fields
+	if req.EndpointName == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"success": false,
+			"message": "endpoint_name is required",
+		})
+	}
 
-	// Validate required fields for Sync
-	if req.ReleaseName == "" || req.ReleaseVersion == "" || req.EndpointName == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(SyncResponse{
-			Success: false,
-			Message: "release_name, release_version, and endpoint_name are required fields",
+	if len(req.Releases) == 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"success": false,
+			"message": "at least one release must be provided",
 		})
 	}
 
 	ctx := context.Background()
-
-	// Verify that the release exists
-	releaseQuery := `
-		FOR r IN release
-			FILTER r.name == @name && r.version == @version
-			LIMIT 1
-			RETURN r
-	`
-	releaseCursor, err := db.Database.Query(ctx, releaseQuery, &arangodb.QueryOptions{
-		BindVars: map[string]interface{}{
-			"name":    req.ReleaseName,
-			"version": req.ReleaseVersion,
-		},
-	})
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(SyncResponse{
-			Success: false,
-			Message: "Failed to query release: " + err.Error(),
-		})
-	}
-	defer releaseCursor.Close()
-
-	if !releaseCursor.HasMore() {
-		return c.Status(fiber.StatusNotFound).JSON(SyncResponse{
-			Success: false,
-			Message: fmt.Sprintf("Release not found: %s version %s", req.ReleaseName, req.ReleaseVersion),
-		})
-	}
 
 	// Check if endpoint exists
 	endpointQuery := `
@@ -720,81 +696,482 @@ func PostSyncWithEndpoint(c *fiber.Ctx) error {
 		},
 	})
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(SyncResponse{
-			Success: false,
-			Message: "Failed to query endpoint: " + err.Error(),
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"success": false,
+			"message": "Failed to query endpoint: " + err.Error(),
 		})
 	}
 	defer endpointCursor.Close()
 
 	endpointExists := endpointCursor.HasMore()
 
-	// If endpoint doesn't exist, create it from the provided endpoint data
+	// If endpoint doesn't exist, create it
 	if !endpointExists {
-		// Validate endpoint fields are provided
 		if req.Endpoint.Name == "" || req.Endpoint.EndpointType == "" || req.Endpoint.Environment == "" {
-			return c.Status(fiber.StatusNotFound).JSON(SyncResponse{
-				Success: false,
-				Message: fmt.Sprintf("Endpoint not found: %s. Provide endpoint name, endpoint_type, and environment to create it.", req.EndpointName),
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"success": false,
+				"message": fmt.Sprintf("Endpoint not found: %s. Provide endpoint name, endpoint_type, and environment to create it.", req.EndpointName),
 			})
 		}
 
-		// Ensure endpoint name matches
 		if req.Endpoint.Name != req.EndpointName {
-			return c.Status(fiber.StatusBadRequest).JSON(SyncResponse{
-				Success: false,
-				Message: "Endpoint name in sync does not match endpoint name in endpoint object",
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"success": false,
+				"message": "Endpoint name in sync does not match endpoint name in endpoint object",
 			})
 		}
 
-		// Set ObjType if not already set
 		if req.Endpoint.ObjType == "" {
 			req.Endpoint.ObjType = "Endpoint"
 		}
 
-		// Create new endpoint
 		_, err := db.Collections["endpoint"].CreateDocument(ctx, req.Endpoint)
 		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(SyncResponse{
-				Success: false,
-				Message: "Failed to create endpoint: " + err.Error(),
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"success": false,
+				"message": "Failed to create endpoint: " + err.Error(),
 			})
 		}
 	}
 
-	// Create the sync record using model.NewSync()
-	sync := model.NewSync()
-	sync.ReleaseName = req.ReleaseName
-	sync.ReleaseVersion = req.ReleaseVersion
-	sync.EndpointName = req.EndpointName
+	// Single timestamp for this complete sync snapshot
+	syncedAt := time.Now()
 
-	// Save sync to database
-	syncMeta, err := db.Collections["sync"].CreateDocument(ctx, sync)
+	// Step 1: Get the CURRENT state of the endpoint
+	currentStateQuery := `
+		FOR sync IN sync
+			FILTER sync.endpoint_name == @endpoint_name
+			COLLECT release_name = sync.release_name INTO syncGroups = sync
+			LET latestSync = (
+				FOR s IN syncGroups
+					SORT s.synced_at DESC
+					LIMIT 1
+					RETURN s
+			)[0]
+			RETURN {
+				name: latestSync.release_name,
+				version: latestSync.release_version
+			}
+	`
+	currentStateCursor, err := db.Database.Query(ctx, currentStateQuery, &arangodb.QueryOptions{
+		BindVars: map[string]interface{}{
+			"endpoint_name": req.EndpointName,
+		},
+	})
 	if err != nil {
-		// Check if it's a unique constraint violation
-		if strings.Contains(err.Error(), "unique constraint") {
-			return c.Status(fiber.StatusConflict).JSON(SyncResponse{
-				Success: false,
-				Message: "Sync already exists for this release and endpoint",
-			})
-		}
-		return c.Status(fiber.StatusInternalServerError).JSON(SyncResponse{
-			Success: false,
-			Message: "Failed to save sync: " + err.Error(),
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"success": false,
+			"message": "Failed to query current endpoint state: " + err.Error(),
 		})
 	}
 
-	message := fmt.Sprintf("Successfully synced release %s version %s to endpoint %s",
-		req.ReleaseName, req.ReleaseVersion, req.EndpointName)
+	currentReleases := make(map[string]string) // name -> version
+	for currentStateCursor.HasMore() {
+		var rel struct {
+			Name    string `json:"name"`
+			Version string `json:"version"`
+		}
+		_, err := currentStateCursor.ReadDocument(ctx, &rel)
+		if err != nil {
+			continue
+		}
+		currentReleases[rel.Name] = rel.Version
+	}
+	currentStateCursor.Close()
 
+	// Step 2: Process each release in the request (create/update with SBOM if provided)
+	type releaseResult struct {
+		name    string
+		version string
+		status  string // "synced", "created", "created_with_sbom", "updated", "updated_with_sbom", "unchanged", "error"
+		syncKey string
+		message string
+	}
+
+	var results []releaseResult
+	updatedReleases := make(map[string]string) // name -> version (the NEW complete state)
+
+	// Start with current state
+	for name, version := range currentReleases {
+		updatedReleases[name] = version
+	}
+
+	// Process releases from request
+	for _, relSync := range req.Releases {
+		release := relSync.Release
+		sbom := relSync.SBOM
+
+		// Validate required fields
+		if release.Name == "" || release.Version == "" {
+			results = append(results, releaseResult{
+				name:    release.Name,
+				version: release.Version,
+				status:  "error",
+				message: "Release name and version are required",
+			})
+			continue
+		}
+
+		// Clean version
+		cleanedVersion := util.CleanVersion(release.Version)
+		release.Version = cleanedVersion
+
+		// Parse and set version components
+		release.ParseAndSetVersion()
+
+		// Set ObjType
+		if release.ObjType == "" {
+			release.ObjType = "ProjectRelease"
+		}
+
+		// Populate ContentSha
+		populateContentSha(&release)
+
+		currentVersion, existsInCurrent := currentReleases[release.Name]
+
+		// Check if this is actually a change
+		if existsInCurrent && currentVersion == cleanedVersion && sbom == nil {
+			results = append(results, releaseResult{
+				name:    release.Name,
+				version: cleanedVersion,
+				status:  "unchanged",
+				message: "Release already at this version",
+			})
+			continue
+		}
+
+		// Check if release exists in database
+		var existingReleaseKey string
+		if release.ContentSha != "" {
+			existingReleaseKey, err = database.FindReleaseByCompositeKey(ctx, db.Database,
+				release.Name, release.Version, release.ContentSha)
+			if err != nil {
+				results = append(results, releaseResult{
+					name:    release.Name,
+					version: cleanedVersion,
+					status:  "error",
+					message: fmt.Sprintf("Failed to check for existing release: %s", err.Error()),
+				})
+				continue
+			}
+		}
+
+		var releaseID string
+		releaseCreated := false
+
+		if existingReleaseKey != "" {
+			// Release already exists
+			releaseID = "release/" + existingReleaseKey
+			release.Key = existingReleaseKey
+		} else {
+			// Create new release
+			releaseMeta, err := db.Collections["release"].CreateDocument(ctx, release)
+			if err != nil {
+				results = append(results, releaseResult{
+					name:    release.Name,
+					version: cleanedVersion,
+					status:  "error",
+					message: fmt.Sprintf("Failed to create release: %s", err.Error()),
+				})
+				continue
+			}
+			releaseID = "release/" + releaseMeta.Key
+			release.Key = releaseMeta.Key
+			releaseCreated = true
+		}
+
+		// Process SBOM if provided
+		sbomProcessed := false
+		if sbom != nil && len(sbom.Content) > 0 {
+			// Validate SBOM content is valid JSON
+			var sbomContent interface{}
+			if err := json.Unmarshal(sbom.Content, &sbomContent); err != nil {
+				results = append(results, releaseResult{
+					name:    release.Name,
+					version: cleanedVersion,
+					status:  "error",
+					message: fmt.Sprintf("SBOM content must be valid JSON: %s", err.Error()),
+				})
+				continue
+			}
+
+			// Set SBOM ObjType
+			if sbom.ObjType == "" {
+				sbom.ObjType = "SBOM"
+			}
+
+			// Calculate content hash for SBOM
+			sbomHash := getSBOMContentHash(*sbom)
+			sbom.ContentSha = sbomHash
+
+			// Check if SBOM exists
+			existingSBOMKey, err := database.FindSBOMByContentHash(ctx, db.Database, sbomHash)
+			if err != nil {
+				results = append(results, releaseResult{
+					name:    release.Name,
+					version: cleanedVersion,
+					status:  "error",
+					message: fmt.Sprintf("Failed to check for existing SBOM: %s", err.Error()),
+				})
+				continue
+			}
+
+			var sbomID string
+
+			if existingSBOMKey != "" {
+				// SBOM already exists
+				sbomID = "sbom/" + existingSBOMKey
+				sbom.Key = existingSBOMKey
+			} else {
+				// Create new SBOM
+				sbomMeta, err := db.Collections["sbom"].CreateDocument(ctx, *sbom)
+				if err != nil {
+					results = append(results, releaseResult{
+						name:    release.Name,
+						version: cleanedVersion,
+						status:  "error",
+						message: fmt.Sprintf("Failed to save SBOM: %s", err.Error()),
+					})
+					continue
+				}
+				sbomID = "sbom/" + sbomMeta.Key
+				sbom.Key = sbomMeta.Key
+			}
+
+			// Delete old release2sbom edges
+			err = deleteRelease2SBOMEdges(ctx, releaseID)
+			if err != nil {
+				results = append(results, releaseResult{
+					name:    release.Name,
+					version: cleanedVersion,
+					status:  "error",
+					message: fmt.Sprintf("Failed to remove old release-sbom relationships: %s", err.Error()),
+				})
+				continue
+			}
+
+			// Create new edge relationship
+			edge := map[string]interface{}{
+				"_from": releaseID,
+				"_to":   sbomID,
+			}
+			_, err = db.Collections["release2sbom"].CreateDocument(ctx, edge)
+			if err != nil {
+				results = append(results, releaseResult{
+					name:    release.Name,
+					version: cleanedVersion,
+					status:  "error",
+					message: fmt.Sprintf("Failed to create release-sbom relationship: %s", err.Error()),
+				})
+				continue
+			}
+
+			// Process SBOM components
+			err = processSBOMComponents(ctx, *sbom, sbomID)
+			if err != nil {
+				results = append(results, releaseResult{
+					name:    release.Name,
+					version: cleanedVersion,
+					status:  "error",
+					message: fmt.Sprintf("Failed to process SBOM components: %s", err.Error()),
+				})
+				continue
+			}
+
+			sbomProcessed = true
+		}
+
+		// Add to updated state
+		updatedReleases[release.Name] = cleanedVersion
+
+		// Determine status message
+		statusMsg := ""
+		if releaseCreated && sbomProcessed {
+			statusMsg = "created_with_sbom"
+		} else if releaseCreated {
+			statusMsg = "created"
+		} else if sbomProcessed {
+			statusMsg = "updated_with_sbom"
+		} else {
+			statusMsg = "updated"
+		}
+
+		results = append(results, releaseResult{
+			name:    release.Name,
+			version: cleanedVersion,
+			status:  statusMsg,
+			message: "Release processed successfully",
+		})
+	}
+
+	// Step 3: Create sync records for the COMPLETE new state with same timestamp
+	var syncKeys []string
+	syncedCount := 0
+
+	for releaseName, releaseVersion := range updatedReleases {
+		// Fetch full metadata for this release
+		releaseQuery := `
+			FOR r IN release
+				FILTER r.name == @name && r.version == @version
+				LIMIT 1
+				RETURN {
+					name: r.name,
+					version: r.version,
+					version_major: r.version_major,
+					version_minor: r.version_minor,
+					version_patch: r.version_patch,
+					version_prerelease: r.version_prerelease
+				}
+		`
+		releaseCursor, err := db.Database.Query(ctx, releaseQuery, &arangodb.QueryOptions{
+			BindVars: map[string]interface{}{
+				"name":    releaseName,
+				"version": releaseVersion,
+			},
+		})
+		if err != nil {
+			continue
+		}
+
+		if !releaseCursor.HasMore() {
+			releaseCursor.Close()
+			continue
+		}
+
+		type releaseMetadata struct {
+			name              string
+			version           string
+			versionMajor      *int
+			versionMinor      *int
+			versionPatch      *int
+			versionPrerelease string
+		}
+
+		var relMeta releaseMetadata
+		_, err = releaseCursor.ReadDocument(ctx, &relMeta)
+		releaseCursor.Close()
+		if err != nil {
+			continue
+		}
+
+		// Create sync record
+		sync := map[string]interface{}{
+			"release_name":    relMeta.name,
+			"release_version": relMeta.version,
+			"endpoint_name":   req.EndpointName,
+			"synced_at":       syncedAt,
+			"objtype":         "Sync",
+		}
+
+		if relMeta.versionMajor != nil {
+			sync["release_version_major"] = *relMeta.versionMajor
+		}
+		if relMeta.versionMinor != nil {
+			sync["release_version_minor"] = *relMeta.versionMinor
+		}
+		if relMeta.versionPatch != nil {
+			sync["release_version_patch"] = *relMeta.versionPatch
+		}
+		if relMeta.versionPrerelease != "" {
+			sync["release_version_prerelease"] = relMeta.versionPrerelease
+		}
+
+		syncMeta, err := db.Collections["sync"].CreateDocument(ctx, sync)
+		if err != nil {
+			// Update result with error if this was a processed release
+			for i := range results {
+				if results[i].name == relMeta.name && results[i].version == relMeta.version {
+					results[i].status = "error"
+					results[i].message = fmt.Sprintf("Failed to save sync: %s", err.Error())
+				}
+			}
+			continue
+		}
+
+		syncKeys = append(syncKeys, syncMeta.Key)
+		syncedCount++
+
+		// Update result with sync key if this was a processed release
+		for i := range results {
+			if results[i].name == relMeta.name && results[i].version == relMeta.version && results[i].status != "unchanged" {
+				results[i].syncKey = syncMeta.Key
+			}
+		}
+	}
+
+	// Build response summary
+	createdCount := 0
+	createdWithSbomCount := 0
+	updatedCount := 0
+	updatedWithSbomCount := 0
+	unchangedCount := 0
+	errorCount := 0
+
+	for _, result := range results {
+		switch result.status {
+		case "created":
+			createdCount++
+		case "created_with_sbom":
+			createdWithSbomCount++
+		case "updated":
+			updatedCount++
+		case "updated_with_sbom":
+			updatedWithSbomCount++
+		case "unchanged":
+			unchangedCount++
+		case "error":
+			errorCount++
+		}
+	}
+
+	totalCreated := createdCount + createdWithSbomCount
+	totalUpdated := updatedCount + updatedWithSbomCount
+
+	// Determine overall success
+	overallSuccess := syncedCount > 0
+	statusCode := fiber.StatusCreated
+	if syncedCount == 0 {
+		statusCode = fiber.StatusBadRequest
+	} else if errorCount > 0 {
+		statusCode = fiber.StatusMultiStatus // 207 - partial success
+	}
+
+	message := fmt.Sprintf("Created sync snapshot with %d releases for endpoint %s", syncedCount, req.EndpointName)
 	if !endpointExists {
 		message += " (endpoint created)"
 	}
+	if totalCreated > 0 {
+		message += fmt.Sprintf(", %d created", totalCreated)
+		if createdWithSbomCount > 0 {
+			message += fmt.Sprintf(" (%d with SBOM)", createdWithSbomCount)
+		}
+	}
+	if totalUpdated > 0 {
+		message += fmt.Sprintf(", %d updated", totalUpdated)
+		if updatedWithSbomCount > 0 {
+			message += fmt.Sprintf(" (%d with SBOM)", updatedWithSbomCount)
+		}
+	}
+	if unchangedCount > 0 {
+		message += fmt.Sprintf(", %d unchanged", unchangedCount)
+	}
+	if errorCount > 0 {
+		message += fmt.Sprintf(", %d errors", errorCount)
+	}
 
-	return c.Status(fiber.StatusCreated).JSON(SyncResponse{
-		Success: true,
-		Message: message,
-		SyncKey: syncMeta.Key,
+	return c.Status(statusCode).JSON(fiber.Map{
+		"success":           overallSuccess,
+		"message":           message,
+		"synced_at":         syncedAt,
+		"total_in_request":  len(req.Releases),
+		"total_synced":      syncedCount,
+		"created":           totalCreated,
+		"created_with_sbom": createdWithSbomCount,
+		"updated":           totalUpdated,
+		"updated_with_sbom": updatedWithSbomCount,
+		"unchanged":         unchangedCount,
+		"errors":            errorCount,
+		"results":           results,
 	})
 }
 

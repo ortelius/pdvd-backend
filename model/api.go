@@ -9,10 +9,23 @@ type ReleaseWithSBOM struct {
 	SBOM SBOM `json:"sbom"`
 }
 
-// SyncWithEndpoint combines Sync and Endpoint for API communication
+// SyncWithEndpoint combines releases and endpoint for bulk sync API communication
 type SyncWithEndpoint struct {
-	Sync
-	Endpoint Endpoint `json:"endpoint"`
+	EndpointName string        `json:"endpoint_name"`
+	Releases     []ReleaseSync `json:"releases"`
+	Endpoint     Endpoint      `json:"endpoint"`
+}
+
+// ReleaseSync represents a release with optional SBOM in the sync request
+type ReleaseSync struct {
+	Release ProjectRelease `json:"release"`
+	SBOM    *SBOM          `json:"sbom,omitempty"` // Optional SBOM
+}
+
+// Release represents a release in the sync request (legacy, kept for compatibility)
+type Release struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
 }
 
 // AffectedRelease represents a release that is affected by a CVE

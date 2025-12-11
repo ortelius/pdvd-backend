@@ -243,11 +243,14 @@ func InitializeDatabase() DBConnection {
 		{Collection: "endpoint", IdxName: "endpoint_type", IdxField: "endpoint_type"},
 		{Collection: "endpoint", IdxName: "endpoint_environment", IdxField: "environment"},
 
-		// Sync collection indexes
+		// Sync collection indexes - supports timestamp-based version tree
 		{Collection: "sync", IdxName: "sync_release_name", IdxField: "release_name"},
 		{Collection: "sync", IdxName: "sync_release_version", IdxField: "release_version"},
 		{Collection: "sync", IdxName: "sync_endpoint_name", IdxField: "endpoint_name"},
 		{Collection: "sync", IdxName: "sync_synced_at", IdxField: "synced_at"},
+		{Collection: "sync", IdxName: "sync_release_version_major", IdxField: "release_version_major"},
+		{Collection: "sync", IdxName: "sync_release_version_minor", IdxField: "release_version_minor"},
+		{Collection: "sync", IdxName: "sync_release_version_patch", IdxField: "release_version_patch"},
 
 		// Edge collection indexes for optimized traversals
 		// CRITICAL: These indexes enable O(log n) lookups in hub-spoke queries with 400K+ CVEs
@@ -485,28 +488,53 @@ func InitializeDatabase() DBConnection {
 		}
 	}
 
-	// Unique composite index for sync to prevent duplicate syncs of same release to same endpoint
-	syncUniqueIdx := "sync_unique_release_endpoint"
+	// Composite index for sync lookup by endpoint + timestamp (for version tree queries)
+	syncEndpointTimestampIdx := "sync_endpoint_timestamp"
 	found = false
 	if indexes, err := collections["sync"].Indexes(ctx); err == nil {
 		for _, index := range indexes {
-			if syncUniqueIdx == index.Name {
+			if syncEndpointTimestampIdx == index.Name {
 				found = true
 				break
 			}
 		}
 	}
 	if !found {
-		uniqueCompositeIdxOptions := arangodb.CreatePersistentIndexOptions{
-			Unique: &True,
+		compositeIdxOptions := arangodb.CreatePersistentIndexOptions{
+			Unique: &False,
 			Sparse: &False,
-			Name:   syncUniqueIdx,
+			Name:   syncEndpointTimestampIdx,
 		}
-		_, _, err = collections["sync"].EnsurePersistentIndex(ctx, []string{"release_name", "release_version", "endpoint_name"}, &uniqueCompositeIdxOptions)
+		_, _, err = collections["sync"].EnsurePersistentIndex(ctx, []string{"endpoint_name", "synced_at"}, &compositeIdxOptions)
 		if err != nil {
-			logger.Sugar().Fatalln("Error creating unique composite index:", err)
+			logger.Sugar().Fatalln("Error creating composite index:", err)
 		} else {
-			logger.Sugar().Infof("Created unique composite index: %s on sync", syncUniqueIdx)
+			logger.Sugar().Infof("Created composite index: %s on sync", syncEndpointTimestampIdx)
+		}
+	}
+
+	// Composite index for sync version sorting by endpoint
+	syncVersionSortIdx := "sync_version_sort"
+	found = false
+	if indexes, err := collections["sync"].Indexes(ctx); err == nil {
+		for _, index := range indexes {
+			if syncVersionSortIdx == index.Name {
+				found = true
+				break
+			}
+		}
+	}
+	if !found {
+		compositeIdxOptions := arangodb.CreatePersistentIndexOptions{
+			Unique: &False,
+			Sparse: &True,
+			Name:   syncVersionSortIdx,
+		}
+		_, _, err = collections["sync"].EnsurePersistentIndex(ctx, []string{"endpoint_name", "release_name", "release_version_major", "release_version_minor", "release_version_patch"}, &compositeIdxOptions)
+		if err != nil {
+			logger.Sugar().Fatalln("Error creating composite index:", err)
+		} else {
+			logger.Sugar().Infof("Created composite index: %s on sync", syncVersionSortIdx)
 		}
 	}
 
