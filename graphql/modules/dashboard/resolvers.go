@@ -3,7 +3,6 @@ package dashboard
 
 import (
 	"context"
-	"sort"
 	"time"
 
 	"github.com/arangodb/go-driver/v2/arangodb"
@@ -59,226 +58,279 @@ func ResolveTopRisks(_ database.DBConnection, _ string, limit int) (interface{},
 	return risks, nil
 }
 
-// ResolveVulnerabilityTrend returns counts of vulns grouped by sync date with Go-side validation
+// ResolveVulnerabilityTrend returns counts of vulns grouped by date using timestamp versioning
 func ResolveVulnerabilityTrend(db database.DBConnection, days int) ([]map[string]interface{}, error) {
 	ctx := context.Background()
 
-	// Query to get historical raw vulnerability data per day
-	// We return the raw list of potential vulnerabilities for Go-side processing
-	trendQuery := `
-		LET today = DATE_NOW()
-		
-		// Generate date range
-		LET dateRange = (
-			FOR i IN 0..@days-1
-				LET date = DATE_SUBTRACT(today, i, "day")
-				RETURN DATE_FORMAT(date, "%yyyy-%mm-%dd")
-		)
-		
-		// For each date, find all syncs that occurred on or before that date
-		FOR targetDate IN dateRange
-			LET targetTimestamp = DATE_ISO8601(CONCAT(targetDate, "T23:59:59Z"))
-			
-			// Get all endpoints that had syncs by this date
-			LET endpointsAtDate = (
-				FOR endpoint IN endpoint
-					// Get the latest sync for each release on this endpoint up to targetDate
-					LET syncedReleasesAtDate = (
-						FOR sync IN sync
-							FILTER sync.endpoint_name == endpoint.name
-							FILTER sync.synced_at <= targetTimestamp
-							COLLECT releaseName = sync.release_name INTO groupedSyncs = sync
-							
-							// Get the latest sync for this release up to targetDate
-							LET latestSync = (
-								FOR s IN groupedSyncs
-									SORT s.release_version_major != null ? s.release_version_major : -1 DESC,
-										s.release_version_minor != null ? s.release_version_minor : -1 DESC,
-										s.release_version_patch != null ? s.release_version_patch : -1 DESC,
-										s.release_version_prerelease != null && s.release_version_prerelease != "" ? 1 : 0 ASC,
-										s.release_version_prerelease ASC,
-										s.release_version DESC
-									LIMIT 1
-									RETURN s
-							)[0]
-							
-							LET releaseDoc = (
-								FOR r IN release
-									FILTER r.name == latestSync.release_name AND r.version == latestSync.release_version
-									LIMIT 1
-									RETURN r
-							)[0]
-							
-							FILTER releaseDoc != null
-							RETURN releaseDoc
-					)
-					
-					FILTER LENGTH(syncedReleasesAtDate) > 0
-					
-					// Get all vulnerabilities for this endpoint at this date
-					LET vulnsAtDate = (
-						FOR releaseDoc IN syncedReleasesAtDate
-							FOR sbom IN 1..1 OUTBOUND releaseDoc release2sbom
-								FOR sbomEdge IN sbom2purl
-									FILTER sbomEdge._from == sbom._id
-									LET purl = DOCUMENT(sbomEdge._to)
-									FILTER purl != null
-									
-									FOR cveEdge IN cve2purl
-										FILTER cveEdge._to == purl._id
-										
-										// Basic AQL filtering (coarse)
-										FILTER (
-											sbomEdge.version_major != null AND 
-											cveEdge.introduced_major != null AND 
-											(cveEdge.fixed_major != null OR cveEdge.last_affected_major != null)
-										) ? (
-											(sbomEdge.version_major > cveEdge.introduced_major OR
-											(sbomEdge.version_major == cveEdge.introduced_major AND 
-											sbomEdge.version_minor > cveEdge.introduced_minor) OR
-											(sbomEdge.version_major == cveEdge.introduced_major AND 
-											sbomEdge.version_minor == cveEdge.introduced_minor AND 
-											sbomEdge.version_patch >= cveEdge.introduced_patch))
-											AND
-											(cveEdge.fixed_major != null ? (
-												sbomEdge.version_major < cveEdge.fixed_major OR
-												(sbomEdge.version_major == cveEdge.fixed_major AND 
-												sbomEdge.version_minor < cveEdge.fixed_minor) OR
-												(sbomEdge.version_major == cveEdge.fixed_major AND 
-												sbomEdge.version_minor == cveEdge.fixed_minor AND 
-												sbomEdge.version_patch < cveEdge.fixed_patch)
-											) : (
-												sbomEdge.version_major < cveEdge.last_affected_major OR
-												(sbomEdge.version_major == cveEdge.last_affected_major AND 
-												sbomEdge.version_minor < cveEdge.last_affected_minor) OR
-												(sbomEdge.version_major == cveEdge.last_affected_major AND 
-												sbomEdge.version_minor == cveEdge.last_affected_minor AND 
-												sbomEdge.version_patch <= cveEdge.last_affected_patch)
-											))
-										) : true
-										
-										LET cve = DOCUMENT(cveEdge._from)
-										FILTER cve != null
-										
-										LET matchedAffected = (
-											FOR affected IN cve.affected != null ? cve.affected : []
-												LET cveBasePurl = affected.package.purl != null ? 
-													affected.package.purl : 
-													CONCAT("pkg:", LOWER(affected.package.ecosystem), "/", affected.package.name)
-												FILTER cveBasePurl == purl.purl
-												RETURN affected
-										)
-										FILTER LENGTH(matchedAffected) > 0
-										
-										RETURN {
-											cve_id: cve.id,
-											severity_rating: cve.database_specific.severity_rating,
-											package: purl.purl,
-											affected_version: sbomEdge.version,
-											all_affected: matchedAffected,
-											needs_validation: sbomEdge.version_major == null OR cveEdge.introduced_major == null
-										}
-					)
-					
-					RETURN vulnsAtDate
-			)
-			
-			// Flatten the list of all potential vulnerabilities across all endpoints for this date
+	// ------------------------------------------------------------------------
+	// STEP 1: Fetch All Sync History
+	// We need the full history to reconstruct the state of endpoints at any given date.
+	// Sorted by synced_at ASC to allow for chronological replay.
+	// ------------------------------------------------------------------------
+	syncQuery := `
+		FOR s IN sync
+			SORT s.synced_at ASC
 			RETURN {
-				date: targetDate,
-				potential_vulns: FLATTEN(endpointsAtDate)
+				endpoint: s.endpoint_name,
+				release_name: s.release_name,
+				release_version: s.release_version,
+				synced_at: s.synced_at
 			}
 	`
 
-	trendCursor, err := db.Database.Query(ctx, trendQuery, &arangodb.QueryOptions{
-		BindVars: map[string]interface{}{
-			"days": days,
-		},
-	})
+	type SyncRecord struct {
+		Endpoint       string `json:"endpoint"`
+		ReleaseName    string `json:"release_name"`
+		ReleaseVersion string `json:"release_version"`
+		SyncedAt       string `json:"synced_at"`
+	}
+
+	syncCursor, err := db.Database.Query(ctx, syncQuery, nil)
 	if err != nil {
 		return []map[string]interface{}{}, err
 	}
-	defer trendCursor.Close()
+	defer syncCursor.Close()
 
-	// Struct to match the query result
-	type SyncedVulnMatch struct {
-		CveID           string            `json:"cve_id"`
-		SeverityRating  string            `json:"severity_rating"`
-		Package         string            `json:"package"`
-		AffectedVersion string            `json:"affected_version"`
-		AllAffected     []models.Affected `json:"all_affected"`
-		NeedsValidation bool              `json:"needs_validation"`
+	var syncHistory []SyncRecord
+	type ReleaseKey struct {
+		Name    string `json:"name"`
+		Version string `json:"version"`
+	}
+	uniqueReleases := make(map[ReleaseKey]bool)
+
+	for syncCursor.HasMore() {
+		var rec SyncRecord
+		if _, err := syncCursor.ReadDocument(ctx, &rec); err == nil {
+			syncHistory = append(syncHistory, rec)
+			uniqueReleases[ReleaseKey{Name: rec.ReleaseName, Version: rec.ReleaseVersion}] = true
+		}
 	}
 
-	type TrendDayResult struct {
-		Date           string            `json:"date"`
-		PotentialVulns []SyncedVulnMatch `json:"potential_vulns"`
+	// ------------------------------------------------------------------------
+	// STEP 2: Batch Fetch Vulnerabilities for All Releases
+	// Uses the robust AQL filter + Go-side validation pattern for consistency.
+	// ------------------------------------------------------------------------
+	var releasesToFetch []ReleaseKey
+	for k := range uniqueReleases {
+		releasesToFetch = append(releasesToFetch, k)
 	}
 
-	var trendData []map[string]interface{}
+	type VulnCounts struct {
+		Critical int
+		High     int
+		Medium   int
+		Low      int
+		Total    int
+	}
 
-	for trendCursor.HasMore() {
-		var dayResult TrendDayResult
-		_, err := trendCursor.ReadDocument(ctx, &dayResult)
+	// Map: "name:version" -> VulnCounts
+	releaseVulnStats := make(map[string]VulnCounts)
+
+	if len(releasesToFetch) > 0 {
+		vulnQuery := `
+			FOR target IN @targets
+				LET releaseDoc = (
+					FOR r IN release
+						FILTER r.name == target.name AND r.version == target.version
+						LIMIT 1
+						RETURN r
+				)[0]
+				
+				FILTER releaseDoc != null
+				
+				LET sbomData = (
+					FOR s IN 1..1 OUTBOUND releaseDoc release2sbom
+						LIMIT 1
+						RETURN { id: s._id }
+				)[0]
+				
+				FILTER sbomData != null
+				
+				LET vulns = (
+					FOR sbomEdge IN sbom2purl
+						FILTER sbomEdge._from == sbomData.id
+						LET purl = DOCUMENT(sbomEdge._to)
+						FILTER purl != null
+						
+						FOR cveEdge IN cve2purl
+							FILTER cveEdge._to == purl._id
+							
+							// ORIGINAL ROBUST FILTER: Handles semantic version comparison in AQL
+							FILTER (
+								sbomEdge.version_major != null AND 
+								cveEdge.introduced_major != null AND 
+								(cveEdge.fixed_major != null OR cveEdge.last_affected_major != null)
+							) ? (
+								(sbomEdge.version_major > cveEdge.introduced_major OR
+								(sbomEdge.version_major == cveEdge.introduced_major AND 
+								sbomEdge.version_minor > cveEdge.introduced_minor) OR
+								(sbomEdge.version_major == cveEdge.introduced_major AND 
+								sbomEdge.version_minor == cveEdge.introduced_minor AND 
+								sbomEdge.version_patch >= cveEdge.introduced_patch))
+								AND
+								(cveEdge.fixed_major != null ? (
+									sbomEdge.version_major < cveEdge.fixed_major OR
+									(sbomEdge.version_major == cveEdge.fixed_major AND 
+									sbomEdge.version_minor < cveEdge.fixed_minor) OR
+									(sbomEdge.version_major == cveEdge.fixed_major AND 
+									sbomEdge.version_minor == cveEdge.fixed_minor AND 
+									sbomEdge.version_patch < cveEdge.fixed_patch)
+								) : (
+									sbomEdge.version_major < cveEdge.last_affected_major OR
+									(sbomEdge.version_major == cveEdge.last_affected_major AND 
+									sbomEdge.version_minor < cveEdge.last_affected_minor) OR
+									(sbomEdge.version_major == cveEdge.last_affected_major AND 
+									sbomEdge.version_minor == cveEdge.last_affected_minor AND 
+									sbomEdge.version_patch <= cveEdge.last_affected_patch)
+								))
+							) : true
+							
+							LET cve = DOCUMENT(cveEdge._from)
+							FILTER cve != null
+							
+							LET matchedAffected = (
+								FOR affected IN cve.affected != null ? cve.affected : []
+									LET cveBasePurl = affected.package.purl != null ? 
+										affected.package.purl : 
+										CONCAT("pkg:", LOWER(affected.package.ecosystem), "/", affected.package.name)
+									FILTER cveBasePurl == purl.purl
+									RETURN affected
+							)
+							FILTER LENGTH(matchedAffected) > 0
+							
+							RETURN {
+								cve_id: cve.id,
+								severity_rating: cve.database_specific.severity_rating,
+								package: purl.purl,
+								affected_version: sbomEdge.version,
+								all_affected: matchedAffected,
+								needs_validation: sbomEdge.version_major == null OR cveEdge.introduced_major == null
+							}
+				)
+				
+				RETURN {
+					name: target.name,
+					version: target.version,
+					vulns: vulns
+				}
+		`
+
+		vCursor, err := db.Database.Query(ctx, vulnQuery, &arangodb.QueryOptions{
+			BindVars: map[string]interface{}{
+				"targets": releasesToFetch,
+			},
+		})
 		if err != nil {
-			continue
+			return nil, err
+		}
+		defer vCursor.Close()
+
+		type VulnRaw struct {
+			CveID           string            `json:"cve_id"`
+			SeverityRating  string            `json:"severity_rating"`
+			AffectedVersion string            `json:"affected_version"`
+			AllAffected     []models.Affected `json:"all_affected"`
+			NeedsValidation bool              `json:"needs_validation"`
 		}
 
-		// Deduplicate vulnerabilities by CVE ID in Go
-		seenCves := make(map[string]string) // cve_id -> severity_rating
+		type ReleaseResult struct {
+			Name    string    `json:"name"`
+			Version string    `json:"version"`
+			Vulns   []VulnRaw `json:"vulns"`
+		}
 
-		for _, vuln := range dayResult.PotentialVulns {
-			// 1. Validation Logic
-			if vuln.NeedsValidation && len(vuln.AllAffected) > 0 {
-				if !isVersionAffectedAny(vuln.AffectedVersion, vuln.AllAffected) {
+		for vCursor.HasMore() {
+			var res ReleaseResult
+			_, err := vCursor.ReadDocument(ctx, &res)
+			if err != nil {
+				continue
+			}
+
+			// Validate and Count
+			counts := VulnCounts{}
+			seen := make(map[string]bool) // Deduplicate by CVE ID
+
+			for _, v := range res.Vulns {
+				// 1. Conditional Go-side Validation
+				if v.NeedsValidation {
+					if len(v.AllAffected) > 0 {
+						if !isVersionAffectedAny(v.AffectedVersion, v.AllAffected) {
+							continue
+						}
+					}
+				}
+
+				if seen[v.CveID] {
 					continue
 				}
-			}
+				seen[v.CveID] = true
 
-			// 2. Deduplication Logic (Only keep unique CVEs for this day)
-			if _, exists := seenCves[vuln.CveID]; !exists {
-				seenCves[vuln.CveID] = vuln.SeverityRating
+				counts.Total++
+				switch v.SeverityRating {
+				case "CRITICAL":
+					counts.Critical++
+				case "HIGH":
+					counts.High++
+				case "MEDIUM":
+					counts.Medium++
+				case "LOW":
+					counts.Low++
+				}
 			}
+			releaseVulnStats[res.Name+":"+res.Version] = counts
+		}
+	}
+
+	// ------------------------------------------------------------------------
+	// STEP 3: Build Trend by Replaying Sync History
+	// Iterate through each day, determining active releases using timestamp logic.
+	// ------------------------------------------------------------------------
+	var trendData []map[string]interface{}
+
+	now := time.Now()
+	// Generate date range (from `days` ago to today)
+	// We go from oldest to newest
+	for i := days - 1; i >= 0; i-- {
+		targetDate := now.AddDate(0, 0, -i)
+		targetDateStr := targetDate.Format("2006-01-02")
+		// End of day timestamp for comparison
+		endOfDayStr := targetDateStr + "T23:59:59Z"
+
+		// Calculate state at end of this day
+		// Map: Endpoint -> Current ReleaseKey
+		endpointState := make(map[string]ReleaseKey)
+
+		// Replay syncs up to this timestamp
+		// Since syncHistory is sorted by time, we can just process in order
+		// For a real optimization, we could maintain an index, but iterating is safe for typical history sizes.
+		for _, sync := range syncHistory {
+			if sync.SyncedAt > endOfDayStr {
+				break // Future sync relative to targetDate
+			}
+			// Update state: Latest sync (by time) becomes the active release
+			endpointState[sync.Endpoint] = ReleaseKey{Name: sync.ReleaseName, Version: sync.ReleaseVersion}
 		}
 
-		// 3. Count by severity
-		criticalCount := 0
-		highCount := 0
-		mediumCount := 0
-		lowCount := 0
-
-		for _, rating := range seenCves {
-			switch rating {
-			case "CRITICAL":
-				criticalCount++
-			case "HIGH":
-				highCount++
-			case "MEDIUM":
-				mediumCount++
-			case "LOW":
-				lowCount++
-			}
+		// Aggregate Vulnerabilities for this day
+		dayCounts := VulnCounts{}
+		for _, releaseKey := range endpointState {
+			stats := releaseVulnStats[releaseKey.Name+":"+releaseKey.Version]
+			dayCounts.Critical += stats.Critical
+			dayCounts.High += stats.High
+			dayCounts.Medium += stats.Medium
+			dayCounts.Low += stats.Low
+			dayCounts.Total += stats.Total
 		}
 
 		trendData = append(trendData, map[string]interface{}{
-			"date":     dayResult.Date,
-			"critical": criticalCount,
-			"high":     highCount,
-			"medium":   mediumCount,
-			"low":      lowCount,
-			"total":    len(seenCves),
+			"date":     targetDateStr,
+			"critical": dayCounts.Critical,
+			"high":     dayCounts.High,
+			"medium":   dayCounts.Medium,
+			"low":      dayCounts.Low,
+			"total":    dayCounts.Total,
 		})
 	}
-
-	// Sort by date ascending (oldest to newest)
-	sort.Slice(trendData, func(i, j int) bool {
-		dateI, okI := trendData[i]["date"].(string)
-		dateJ, okJ := trendData[j]["date"].(string)
-		if !okI || !okJ {
-			return false
-		}
-		return dateI < dateJ
-	})
 
 	return trendData, nil
 }
@@ -287,73 +339,51 @@ func ResolveVulnerabilityTrend(db database.DBConnection, days int) ([]map[string
 func ResolveDashboardGlobalStatus(db database.DBConnection, limit int) (map[string]interface{}, error) {
 	ctx := context.Background()
 
-	// Step 1: Fetch Endpoints and their Services (Current via SemVer, Previous via Date)
-	query := `
+	// ========================================================================
+	// STEP 1: Inventory Query
+	// Fetch all endpoints and their service inventory (Current vs Previous)
+	// independently sorted by their own timestamp history.
+	// ========================================================================
+	inventoryQuery := `
 		FOR endpoint IN endpoint
 			LIMIT @limit
-			LET serviceSyncs = (
-				FOR s IN sync
-					FILTER s.endpoint_name == endpoint.name
-					COLLECT releaseName = s.release_name INTO groups = s
+			LET services = (
+				FOR sync IN sync
+					FILTER sync.endpoint_name == endpoint.name
+					COLLECT releaseName = sync.release_name INTO groups = sync
 					
-					// DEDUPLICATION: Get unique versions. 
-					// We use MAX(synced_at) to find the latest sync time for this specific version.
-					LET uniqueVersions = (
-						FOR g IN groups
-							COLLECT ver = g.release_version INTO vGroups = g
-							
-							LET maxDate = MAX(vGroups[*].synced_at)
-							LET anyDoc = vGroups[0]
-							
+					// Sort all syncs for this specific service/endpoint combo by time
+					LET sortedSyncs = (
+						FOR s IN groups
+							SORT s.synced_at DESC
 							RETURN { 
-								version: ver, 
-								synced_at: maxDate,
-								major: anyDoc.release_version_major,
-								minor: anyDoc.release_version_minor,
-								patch: anyDoc.release_version_patch,
-								prerelease: anyDoc.release_version_prerelease
+								version: s.release_version, 
+								synced_at: s.synced_at 
 							}
 					)
-
-					// 1. Determine CURRENT state using SemVer (Highest Version)
-					LET current = (
-						FOR v IN uniqueVersions 
-							SORT v.major != null ? v.major : -1 DESC,
-								v.minor != null ? v.minor : -1 DESC,
-								v.patch != null ? v.patch : -1 DESC,
-								v.prerelease != null && v.prerelease != "" ? 1 : 0 ASC,
-								v.prerelease ASC,
-								v.version DESC
-							LIMIT 1 
-							RETURN { version: v.version, synced_at: v.synced_at }
-					)[0]
-
-					// 2. Determine PREVIOUS state using Synced Date (Most recent sync excluding Current)
-					LET previous = (
-						FOR v IN uniqueVersions
-							FILTER v.version != current.version
-							SORT v.synced_at DESC
-							LIMIT 1
-							RETURN { version: v.version, synced_at: v.synced_at }
-					)[0]
+					
+					// Current is the latest for this endpoint
+					LET current = sortedSyncs[0]
+					
+					// Previous is the one immediately preceding it for this endpoint
+					LET previous = LENGTH(sortedSyncs) > 1 ? sortedSyncs[1] : null
 					
 					RETURN {
 						name: releaseName,
 						current: current,
-						previous: previous,
-						history: uniqueVersions
+						previous: previous
 					}
 			)
 			
-			FILTER LENGTH(serviceSyncs) > 0
+			FILTER LENGTH(services) > 0
 			
 			RETURN {
 				endpoint_name: endpoint.name,
-				services: serviceSyncs
+				services: services
 			}
 	`
 
-	cursor, err := db.Database.Query(ctx, query, &arangodb.QueryOptions{
+	cursor, err := db.Database.Query(ctx, inventoryQuery, &arangodb.QueryOptions{
 		BindVars: map[string]interface{}{
 			"limit": limit,
 		},
@@ -363,154 +393,156 @@ func ResolveDashboardGlobalStatus(db database.DBConnection, limit int) (map[stri
 	}
 	defer cursor.Close()
 
+	// Structures to hold the inventory
 	type ServiceState struct {
-		Name    string `json:"name"`
-		Current struct {
-			Version  string `json:"version"`
-			SyncedAt string `json:"synced_at"`
-		} `json:"current"`
-		Previous *struct {
-			Version  string `json:"version"`
-			SyncedAt string `json:"synced_at"`
-		} `json:"previous"`
-		History []struct {
-			Version  string `json:"version"`
-			SyncedAt string `json:"synced_at"`
-		} `json:"history"`
+		Version  string `json:"version"`
+		SyncedAt string `json:"synced_at"`
+	}
+	type ServiceInventory struct {
+		Name     string        `json:"name"`
+		Current  ServiceState  `json:"current"`
+		Previous *ServiceState `json:"previous"`
+	}
+	type EndpointInventory struct {
+		EndpointName string             `json:"endpoint_name"`
+		Services     []ServiceInventory `json:"services"`
 	}
 
-	type EndpointData struct {
-		EndpointName string         `json:"endpoint_name"`
-		Services     []ServiceState `json:"services"`
-	}
+	var inventoryList []EndpointInventory
 
-	var endpoints []EndpointData
+	// Track unique releases globally to batch-fetch vulnerabilities efficiently
 	type ReleaseKey struct {
 		Name    string `json:"name"`
 		Version string `json:"version"`
 	}
+	uniqueReleases := make(map[ReleaseKey]bool)
 	var releasesToFetch []ReleaseKey
-	seenRelease := make(map[string]bool)
 
-	// Collect all unique releases needed
 	for cursor.HasMore() {
-		var ep EndpointData
+		var ep EndpointInventory
 		_, err := cursor.ReadDocument(ctx, &ep)
 		if err != nil {
 			continue
 		}
-		endpoints = append(endpoints, ep)
+		inventoryList = append(inventoryList, ep)
 
 		for _, svc := range ep.Services {
-			keyCurr := svc.Name + ":" + svc.Current.Version
-			if !seenRelease[keyCurr] {
-				releasesToFetch = append(releasesToFetch, ReleaseKey{Name: svc.Name, Version: svc.Current.Version})
-				seenRelease[keyCurr] = true
+			// Current Version
+			currKey := ReleaseKey{Name: svc.Name, Version: svc.Current.Version}
+			if !uniqueReleases[currKey] {
+				uniqueReleases[currKey] = true
+				releasesToFetch = append(releasesToFetch, currKey)
 			}
+			// Previous Version (for Delta)
 			if svc.Previous != nil {
-				keyPrev := svc.Name + ":" + svc.Previous.Version
-				if !seenRelease[keyPrev] {
-					releasesToFetch = append(releasesToFetch, ReleaseKey{Name: svc.Name, Version: svc.Previous.Version})
-					seenRelease[keyPrev] = true
+				prevKey := ReleaseKey{Name: svc.Name, Version: svc.Previous.Version}
+				if !uniqueReleases[prevKey] {
+					uniqueReleases[prevKey] = true
+					releasesToFetch = append(releasesToFetch, prevKey)
 				}
 			}
 		}
 	}
 
-	// Step 2: Batch fetch Raw Vulnerability Candidates
-	type RawVulnMatch struct {
-		CveID           string            `json:"cve_id"`
-		SeverityRating  string            `json:"severity_rating"`
-		AffectedVersion string            `json:"affected_version"`
-		AllAffected     []models.Affected `json:"all_affected"`
-		NeedsValidation bool              `json:"needs_validation"`
-	}
+	// ========================================================================
+	// STEP 2: Vulnerability Batch Query
+	// Fetch potential vulnerabilities for ALL involved releases
+	// ========================================================================
 
-	releaseVulnsMap := make(map[string][]RawVulnMatch)
+	// Map: "name:version" -> []VulnData
+	releaseVulnMap := make(map[string][]map[string]interface{})
 
 	if len(releasesToFetch) > 0 {
 		vulnQuery := `
-			FOR item IN @releases
+			FOR target IN @targets
 				LET releaseDoc = (
-					FOR r IN release 
-						FILTER r.name == item.name AND r.version == item.version 
-						LIMIT 1 
+					FOR r IN release
+						FILTER r.name == target.name AND r.version == target.version
+						LIMIT 1
 						RETURN r
 				)[0]
 				
 				FILTER releaseDoc != null
-
-				LET cveMatches = (
-					FOR sbom IN 1..1 OUTBOUND releaseDoc release2sbom
-						FOR sbomEdge IN sbom2purl
-							FILTER sbomEdge._from == sbom._id
-							LET purl = DOCUMENT(sbomEdge._to)
-							FILTER purl != null
-
-							FOR cveEdge IN cve2purl
-								FILTER cveEdge._to == purl._id
-								
-								FILTER (
-									sbomEdge.version_major != null AND 
-									cveEdge.introduced_major != null AND 
-									(cveEdge.fixed_major != null OR cveEdge.last_affected_major != null)
-								) ? (
-									(sbomEdge.version_major > cveEdge.introduced_major OR
-									 (sbomEdge.version_major == cveEdge.introduced_major AND 
-									  sbomEdge.version_minor > cveEdge.introduced_minor) OR
-									 (sbomEdge.version_major == cveEdge.introduced_major AND 
-									  sbomEdge.version_minor == cveEdge.introduced_minor AND 
-									  sbomEdge.version_patch >= cveEdge.introduced_patch))
-									AND
-									(cveEdge.fixed_major != null ? (
-										sbomEdge.version_major < cveEdge.fixed_major OR
-										(sbomEdge.version_major == cveEdge.fixed_major AND 
-										 sbomEdge.version_minor < cveEdge.fixed_minor) OR
-										(sbomEdge.version_major == cveEdge.fixed_major AND 
-										 sbomEdge.version_minor == cveEdge.fixed_minor AND 
-										 sbomEdge.version_patch < cveEdge.fixed_patch)
-									) : (
-										sbomEdge.version_major < cveEdge.last_affected_major OR
-										(sbomEdge.version_major == cveEdge.last_affected_major AND 
-										 sbomEdge.version_minor < cveEdge.last_affected_minor) OR
-										(sbomEdge.version_major == cveEdge.last_affected_major AND 
-										 sbomEdge.version_minor == cveEdge.last_affected_minor AND 
-										 sbomEdge.version_patch <= cveEdge.last_affected_patch)
-									))
-								) : true
-
-								LET cve = DOCUMENT(cveEdge._from)
-								FILTER cve != null
-								
-								LET matchedAffected = (
-									FOR affected IN cve.affected != null ? cve.affected : []
-										LET cveBasePurl = affected.package.purl != null ? 
-											affected.package.purl : 
-											CONCAT("pkg:", LOWER(affected.package.ecosystem), "/", affected.package.name)
-										FILTER cveBasePurl == purl.purl
-										RETURN affected
-								)
-								FILTER LENGTH(matchedAffected) > 0
-								
-								RETURN {
-									cve_id: cve.id,
-									severity_rating: cve.database_specific.severity_rating,
-									affected_version: sbomEdge.version,
-									all_affected: matchedAffected,
-									needs_validation: sbomEdge.version_major == null OR cveEdge.introduced_major == null
-								}
+				
+				LET sbomData = (
+					FOR s IN 1..1 OUTBOUND releaseDoc release2sbom
+						LIMIT 1
+						RETURN { id: s._id }
+				)[0]
+				
+				FILTER sbomData != null
+				
+				LET vulns = (
+					FOR sbomEdge IN sbom2purl
+						FILTER sbomEdge._from == sbomData.id
+						LET purl = DOCUMENT(sbomEdge._to)
+						FILTER purl != null
+						
+						FOR cveEdge IN cve2purl
+							FILTER cveEdge._to == purl._id
+							
+							// ROBUST AQL FILTER
+							FILTER (
+								sbomEdge.version_major != null AND 
+								cveEdge.introduced_major != null AND 
+								(cveEdge.fixed_major != null OR cveEdge.last_affected_major != null)
+							) ? (
+								(sbomEdge.version_major > cveEdge.introduced_major OR
+								(sbomEdge.version_major == cveEdge.introduced_major AND 
+								sbomEdge.version_minor > cveEdge.introduced_minor) OR
+								(sbomEdge.version_major == cveEdge.introduced_major AND 
+								sbomEdge.version_minor == cveEdge.introduced_minor AND 
+								sbomEdge.version_patch >= cveEdge.introduced_patch))
+								AND
+								(cveEdge.fixed_major != null ? (
+									sbomEdge.version_major < cveEdge.fixed_major OR
+									(sbomEdge.version_major == cveEdge.fixed_major AND 
+									sbomEdge.version_minor < cveEdge.fixed_minor) OR
+									(sbomEdge.version_major == cveEdge.fixed_major AND 
+									sbomEdge.version_minor == cveEdge.fixed_minor AND 
+									sbomEdge.version_patch < cveEdge.fixed_patch)
+								) : (
+									sbomEdge.version_major < cveEdge.last_affected_major OR
+									(sbomEdge.version_major == cveEdge.last_affected_major AND 
+									sbomEdge.version_minor < cveEdge.last_affected_minor) OR
+									(sbomEdge.version_major == cveEdge.last_affected_major AND 
+									sbomEdge.version_minor == cveEdge.last_affected_minor AND 
+									sbomEdge.version_patch <= cveEdge.last_affected_patch)
+								))
+							) : true
+							
+							LET cve = DOCUMENT(cveEdge._from)
+							FILTER cve != null
+							
+							LET matchedAffected = (
+								FOR affected IN cve.affected != null ? cve.affected : []
+									LET cveBasePurl = affected.package.purl != null ? 
+										affected.package.purl : 
+										CONCAT("pkg:", LOWER(affected.package.ecosystem), "/", affected.package.name)
+									FILTER cveBasePurl == purl.purl
+									RETURN affected
+							)
+							FILTER LENGTH(matchedAffected) > 0
+							
+							RETURN {
+								cve_id: cve.id,
+								severity_rating: cve.database_specific.severity_rating,
+								affected_version: sbomEdge.version,
+								all_affected: matchedAffected,
+								needs_validation: sbomEdge.version_major == null OR cveEdge.introduced_major == null
+							}
 				)
-
+				
 				RETURN {
-					name: item.name,
-					version: item.version,
-					cves: cveMatches
+					name: target.name,
+					version: target.version,
+					vulns: vulns
 				}
 		`
 
 		vCursor, err := db.Database.Query(ctx, vulnQuery, &arangodb.QueryOptions{
 			BindVars: map[string]interface{}{
-				"releases": releasesToFetch,
+				"targets": releasesToFetch,
 			},
 		})
 		if err != nil {
@@ -518,36 +550,57 @@ func ResolveDashboardGlobalStatus(db database.DBConnection, limit int) (map[stri
 		}
 		defer vCursor.Close()
 
+		type VulnRaw struct {
+			CveID           string            `json:"cve_id"`
+			SeverityRating  string            `json:"severity_rating"`
+			AffectedVersion string            `json:"affected_version"`
+			AllAffected     []models.Affected `json:"all_affected"`
+			NeedsValidation bool              `json:"needs_validation"`
+		}
+
 		type ReleaseVulnResult struct {
-			Name    string         `json:"name"`
-			Version string         `json:"version"`
-			CVEs    []RawVulnMatch `json:"cves"`
+			Name    string    `json:"name"`
+			Version string    `json:"version"`
+			Vulns   []VulnRaw `json:"vulns"`
 		}
 
 		for vCursor.HasMore() {
-			var r ReleaseVulnResult
-			_, err := vCursor.ReadDocument(ctx, &r)
+			var res ReleaseVulnResult
+			_, err := vCursor.ReadDocument(ctx, &res)
 			if err != nil {
 				continue
 			}
 
-			// Pre-validate vulns for this release
-			var validVulns []RawVulnMatch
-			for _, vuln := range r.CVEs {
-				if vuln.NeedsValidation && len(vuln.AllAffected) > 0 {
-					if !isVersionAffectedAny(vuln.AffectedVersion, vuln.AllAffected) {
-						continue
+			var validVulns []map[string]interface{}
+			seen := make(map[string]bool)
+
+			for _, v := range res.Vulns {
+				if v.NeedsValidation {
+					if len(v.AllAffected) > 0 {
+						if !isVersionAffectedAny(v.AffectedVersion, v.AllAffected) {
+							continue
+						}
 					}
 				}
-				validVulns = append(validVulns, vuln)
+
+				if seen[v.CveID] {
+					continue
+				}
+				seen[v.CveID] = true
+
+				validVulns = append(validVulns, map[string]interface{}{
+					"cve_id":          v.CveID,
+					"severity_rating": v.SeverityRating,
+				})
 			}
-			releaseVulnsMap[r.Name+":"+r.Version] = validVulns
+			releaseVulnMap[res.Name+":"+res.Version] = validVulns
 		}
 	}
 
-	// Step 3: Aggregate globally
-	// - Counts: Include ALL services (Active + Stale).
-	// - Deltas: Include ONLY services updated in the latest sync batch (Active).
+	// ========================================================================
+	// STEP 3: Aggregation
+	// ========================================================================
+
 	aggCritical := struct{ count, delta int }{}
 	aggHigh := struct{ count, delta int }{}
 	aggMedium := struct{ count, delta int }{}
@@ -555,8 +608,29 @@ func ResolveDashboardGlobalStatus(db database.DBConnection, limit int) (map[stri
 	totalCount := 0
 	totalDelta := 0
 
-	for _, ep := range endpoints {
-		// 3a. Determine Latest Sync Time for this Endpoint
+	getReleaseCounts := func(name, version string) map[string]int {
+		counts := map[string]int{"critical": 0, "high": 0, "medium": 0, "low": 0, "total": 0}
+		key := name + ":" + version
+		vulns := releaseVulnMap[key]
+		for _, v := range vulns {
+			rating := v["severity_rating"].(string)
+			counts["total"]++
+			switch rating {
+			case "CRITICAL":
+				counts["critical"]++
+			case "HIGH":
+				counts["high"]++
+			case "MEDIUM":
+				counts["medium"]++
+			case "LOW":
+				counts["low"]++
+			}
+		}
+		return counts
+	}
+
+	for _, ep := range inventoryList {
+		// Calculate Stale Cutoff specific to THIS endpoint's latest sync time
 		var latestSyncTime time.Time
 		hasTime := false
 
@@ -574,49 +648,19 @@ func ResolveDashboardGlobalStatus(db database.DBConnection, limit int) (map[stri
 			}
 		}
 
-		// If we can't determine time, assume all are active (fallback)
-		staleCutoff := latestSyncTime.Add(-2 * time.Hour) // 2 Hour tolerance for "Same Batch"
-
-		// Helper to count unique vulns for a release
-		countReleaseVulns := func(name, version string) map[string]int {
-			counts := map[string]int{"critical": 0, "high": 0, "medium": 0, "low": 0, "total": 0}
-			key := name + ":" + version
-			vulns, ok := releaseVulnsMap[key]
-			if !ok {
-				return counts
-			}
-			seen := make(map[string]bool)
-			for _, v := range vulns {
-				if seen[v.CveID] {
-					continue
-				}
-				seen[v.CveID] = true
-				counts["total"]++
-				switch v.SeverityRating {
-				case "CRITICAL":
-					counts["critical"]++
-				case "HIGH":
-					counts["high"]++
-				case "MEDIUM":
-					counts["medium"]++
-				case "LOW":
-					counts["low"]++
-				}
-			}
-			return counts
-		}
+		staleCutoff := latestSyncTime.Add(-2 * time.Hour) // Tolerance relative to this endpoint
 
 		for _, svc := range ep.Services {
-			currCounts := countReleaseVulns(svc.Name, svc.Current.Version)
+			// Current
+			currCounts := getReleaseCounts(svc.Name, svc.Current.Version)
 
-			// 1. ALWAYS Add to Total Count (Retention Policy)
 			aggCritical.count += currCounts["critical"]
 			aggHigh.count += currCounts["high"]
 			aggMedium.count += currCounts["medium"]
 			aggLow.count += currCounts["low"]
 			totalCount += currCounts["total"]
 
-			// 2. Check if Service is ACTIVE (synced recently) for Delta Calculation
+			// Delta Logic (Check Stale relative to THIS endpoint)
 			isStale := false
 			if hasTime && svc.Current.SyncedAt != "" {
 				t, err := time.Parse(time.RFC3339, svc.Current.SyncedAt)
@@ -626,10 +670,9 @@ func ResolveDashboardGlobalStatus(db database.DBConnection, limit int) (map[stri
 			}
 
 			if !isStale {
-				// ACTIVE: Calculate Delta (Current - Previous)
 				prevCounts := map[string]int{"critical": 0, "high": 0, "medium": 0, "low": 0, "total": 0}
 				if svc.Previous != nil {
-					prevCounts = countReleaseVulns(svc.Name, svc.Previous.Version)
+					prevCounts = getReleaseCounts(svc.Name, svc.Previous.Version)
 				}
 
 				aggCritical.delta += (currCounts["critical"] - prevCounts["critical"])
@@ -638,7 +681,6 @@ func ResolveDashboardGlobalStatus(db database.DBConnection, limit int) (map[stri
 				aggLow.delta += (currCounts["low"] - prevCounts["low"])
 				totalDelta += (currCounts["total"] - prevCounts["total"])
 			}
-			// STALE: Delta is 0 (No change in this sync run)
 		}
 	}
 
