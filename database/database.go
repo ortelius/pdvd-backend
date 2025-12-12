@@ -244,6 +244,7 @@ func InitializeDatabase() DBConnection {
 		{Collection: "endpoint", IdxName: "endpoint_environment", IdxField: "environment"},
 
 		// Sync collection indexes - supports timestamp-based version tree
+		// Ensure synced_at is indexed for Trend Analysis
 		{Collection: "sync", IdxName: "sync_release_name", IdxField: "release_name"},
 		{Collection: "sync", IdxName: "sync_release_version", IdxField: "release_version"},
 		{Collection: "sync", IdxName: "sync_endpoint_name", IdxField: "endpoint_name"},

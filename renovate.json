@@ -1,20 +1,11 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [
-    "config:base",
-    "group:all"
-  ],
-  "ignorePaths": [
-    "chart/**"
-  ],
-  "schedule": [
-    "every 1 hours every weekday"
-  ],
+  "extends": ["config:base", "group:all"],
+  "ignorePaths": ["chart/**"],
+  "schedule": ["every 1 hours every weekday"],
   "prHourlyLimit": 4,
   "pip_requirements": {
-    "fileMatch": [
-      "(^|/)requirements\\.in$"
-    ]
+    "fileMatch": ["(^|/)requirements\\.in$"]
   },
   "groupName": "all dependencies",
   "groupSlug": "all",
@@ -25,29 +16,18 @@
     {
       "groupName": "all dependencies",
       "groupSlug": "all",
-      "matchPackagePatterns": [
-        ".*"
-      ],
+      "matchPackagePatterns": [".*"],
       "automerge": true,
       "autoApprove": true,
-      "excludePackageNames": [
-        "github.com/google/osv-scanner"
-      ]
+      "excludePackageNames": ["github.com/google/osv-scanner"]
     },
     {
-      "matchManagers": [
-        "gomod"
-      ],
-      "matchPackagePatterns": [
-        "^go",
-        "^toolchain"
-      ],
+      "matchManagers": ["gomod"],
+      "matchPackagePatterns": ["^go", "^toolchain"],
       "enabled": false
     },
     {
-      "matchPackageNames": [
-        "github.com/google/osv-scanner"
-      ],
+      "matchPackageNames": ["github.com/google/osv-scanner"],
       "allowedVersions": "v1.9.2"
     }
   ],

@@ -460,7 +460,7 @@ func updateCVELifecycleTracking(ctx context.Context, endpointName string,
 	syncedAt time.Time, updatedReleases map[string]string) error {
 
 	// Step 1: Get CURRENT CVE state for this endpoint
-	currentCVEs, err := getCurrentCVEsForEndpoint(ctx, endpointName, updatedReleases)
+	currentCVEs, err := getCurrentCVEsForEndpoint(ctx, updatedReleases)
 	if err != nil {
 		return fmt.Errorf("failed to get current CVEs: %w", err)
 	}
@@ -498,8 +498,7 @@ func updateCVELifecycleTracking(ctx context.Context, endpointName string,
 }
 
 // getCurrentCVEsForEndpoint fetches all CVEs for the endpoint's current state
-func getCurrentCVEsForEndpoint(ctx context.Context, endpointName string,
-	releases map[string]string) (map[string]CurrentCVEInfo, error) {
+func getCurrentCVEsForEndpoint(ctx context.Context, releases map[string]string) (map[string]CurrentCVEInfo, error) {
 
 	result := make(map[string]CurrentCVEInfo)
 
@@ -1100,11 +1099,11 @@ func PostSyncWithEndpoint(c *fiber.Ctx) error {
 
 	// Step 2: Process each release in the request (create/update with SBOM if provided)
 	type releaseResult struct {
-		name    string
-		version string
-		status  string // "synced", "created", "created_with_sbom", "updated", "updated_with_sbom", "unchanged", "error"
-		syncKey string
-		message string
+		Name    string `json:"name"`
+		Version string `json:"version"`
+		Status  string `json:"status"` // "synced", "created", "created_with_sbom", "updated", "updated_with_sbom", "unchanged", "error"
+		SyncKey string `json:"sync_key,omitempty"`
+		Message string `json:"message"`
 	}
 
 	var results []releaseResult
@@ -1123,10 +1122,10 @@ func PostSyncWithEndpoint(c *fiber.Ctx) error {
 		// Validate required fields
 		if release.Name == "" || release.Version == "" {
 			results = append(results, releaseResult{
-				name:    release.Name,
-				version: release.Version,
-				status:  "error",
-				message: "Release name and version are required",
+				Name:    release.Name,
+				Version: release.Version,
+				Status:  "error",
+				Message: "Release name and version are required",
 			})
 			continue
 		}
@@ -1151,10 +1150,10 @@ func PostSyncWithEndpoint(c *fiber.Ctx) error {
 		// Check if this is actually a change
 		if existsInCurrent && currentVersion == cleanedVersion && sbom == nil {
 			results = append(results, releaseResult{
-				name:    release.Name,
-				version: cleanedVersion,
-				status:  "unchanged",
-				message: "Release already at this version",
+				Name:    release.Name,
+				Version: cleanedVersion,
+				Status:  "unchanged",
+				Message: "Release already at this version",
 			})
 			continue
 		}
@@ -1166,10 +1165,10 @@ func PostSyncWithEndpoint(c *fiber.Ctx) error {
 				release.Name, release.Version, release.ContentSha)
 			if err != nil {
 				results = append(results, releaseResult{
-					name:    release.Name,
-					version: cleanedVersion,
-					status:  "error",
-					message: fmt.Sprintf("Failed to check for existing release: %s", err.Error()),
+					Name:    release.Name,
+					Version: cleanedVersion,
+					Status:  "error",
+					Message: fmt.Sprintf("Failed to check for existing release: %s", err.Error()),
 				})
 				continue
 			}
@@ -1187,10 +1186,10 @@ func PostSyncWithEndpoint(c *fiber.Ctx) error {
 			releaseMeta, err := db.Collections["release"].CreateDocument(ctx, release)
 			if err != nil {
 				results = append(results, releaseResult{
-					name:    release.Name,
-					version: cleanedVersion,
-					status:  "error",
-					message: fmt.Sprintf("Failed to create release: %s", err.Error()),
+					Name:    release.Name,
+					Version: cleanedVersion,
+					Status:  "error",
+					Message: fmt.Sprintf("Failed to create release: %s", err.Error()),
 				})
 				continue
 			}
@@ -1206,10 +1205,10 @@ func PostSyncWithEndpoint(c *fiber.Ctx) error {
 			var sbomContent interface{}
 			if err := json.Unmarshal(sbom.Content, &sbomContent); err != nil {
 				results = append(results, releaseResult{
-					name:    release.Name,
-					version: cleanedVersion,
-					status:  "error",
-					message: fmt.Sprintf("SBOM content must be valid JSON: %s", err.Error()),
+					Name:    release.Name,
+					Version: cleanedVersion,
+					Status:  "error",
+					Message: fmt.Sprintf("SBOM content must be valid JSON: %s", err.Error()),
 				})
 				continue
 			}
@@ -1227,10 +1226,10 @@ func PostSyncWithEndpoint(c *fiber.Ctx) error {
 			existingSBOMKey, err := database.FindSBOMByContentHash(ctx, db.Database, sbomHash)
 			if err != nil {
 				results = append(results, releaseResult{
-					name:    release.Name,
-					version: cleanedVersion,
-					status:  "error",
-					message: fmt.Sprintf("Failed to check for existing SBOM: %s", err.Error()),
+					Name:    release.Name,
+					Version: cleanedVersion,
+					Status:  "error",
+					Message: fmt.Sprintf("Failed to check for existing SBOM: %s", err.Error()),
 				})
 				continue
 			}
@@ -1246,10 +1245,10 @@ func PostSyncWithEndpoint(c *fiber.Ctx) error {
 				sbomMeta, err := db.Collections["sbom"].CreateDocument(ctx, *sbom)
 				if err != nil {
 					results = append(results, releaseResult{
-						name:    release.Name,
-						version: cleanedVersion,
-						status:  "error",
-						message: fmt.Sprintf("Failed to save SBOM: %s", err.Error()),
+						Name:    release.Name,
+						Version: cleanedVersion,
+						Status:  "error",
+						Message: fmt.Sprintf("Failed to save SBOM: %s", err.Error()),
 					})
 					continue
 				}
@@ -1261,10 +1260,10 @@ func PostSyncWithEndpoint(c *fiber.Ctx) error {
 			err = deleteRelease2SBOMEdges(ctx, releaseID)
 			if err != nil {
 				results = append(results, releaseResult{
-					name:    release.Name,
-					version: cleanedVersion,
-					status:  "error",
-					message: fmt.Sprintf("Failed to remove old release-sbom relationships: %s", err.Error()),
+					Name:    release.Name,
+					Version: cleanedVersion,
+					Status:  "error",
+					Message: fmt.Sprintf("Failed to remove old release-sbom relationships: %s", err.Error()),
 				})
 				continue
 			}
@@ -1277,10 +1276,10 @@ func PostSyncWithEndpoint(c *fiber.Ctx) error {
 			_, err = db.Collections["release2sbom"].CreateDocument(ctx, edge)
 			if err != nil {
 				results = append(results, releaseResult{
-					name:    release.Name,
-					version: cleanedVersion,
-					status:  "error",
-					message: fmt.Sprintf("Failed to create release-sbom relationship: %s", err.Error()),
+					Name:    release.Name,
+					Version: cleanedVersion,
+					Status:  "error",
+					Message: fmt.Sprintf("Failed to create release-sbom relationship: %s", err.Error()),
 				})
 				continue
 			}
@@ -1289,10 +1288,10 @@ func PostSyncWithEndpoint(c *fiber.Ctx) error {
 			err = processSBOMComponents(ctx, *sbom, sbomID)
 			if err != nil {
 				results = append(results, releaseResult{
-					name:    release.Name,
-					version: cleanedVersion,
-					status:  "error",
-					message: fmt.Sprintf("Failed to process SBOM components: %s", err.Error()),
+					Name:    release.Name,
+					Version: cleanedVersion,
+					Status:  "error",
+					Message: fmt.Sprintf("Failed to process SBOM components: %s", err.Error()),
 				})
 				continue
 			}
@@ -1305,25 +1304,27 @@ func PostSyncWithEndpoint(c *fiber.Ctx) error {
 
 		// Determine status message
 		statusMsg := ""
-		if releaseCreated && sbomProcessed {
+		switch {
+		case releaseCreated && sbomProcessed:
 			statusMsg = "created_with_sbom"
-		} else if releaseCreated {
+		case releaseCreated:
 			statusMsg = "created"
-		} else if sbomProcessed {
+		case sbomProcessed:
 			statusMsg = "updated_with_sbom"
-		} else {
+		default:
 			statusMsg = "updated"
 		}
 
 		results = append(results, releaseResult{
-			name:    release.Name,
-			version: cleanedVersion,
-			status:  statusMsg,
-			message: "Release processed successfully",
+			Name:    release.Name,
+			Version: cleanedVersion,
+			Status:  statusMsg,
+			Message: "Release processed successfully",
 		})
 	}
 
-	// Step 3: Create sync records for the COMPLETE new state with same timestamp
+	// Step 3: Create sync records for the COMPLETE new state
+	// REVISED: Always create new sync records to maintain history (Trend Analysis)
 	var syncKeys []string
 	syncedCount := 0
 
@@ -1373,12 +1374,12 @@ func PostSyncWithEndpoint(c *fiber.Ctx) error {
 			continue
 		}
 
-		// Create sync record
+		// Create sync record object
 		sync := map[string]interface{}{
 			"release_name":    relMeta.Name,
 			"release_version": relMeta.Version,
 			"endpoint_name":   req.EndpointName,
-			"synced_at":       syncedAt,
+			"synced_at":       syncedAt, // Timestamp is key for history
 			"objtype":         "Sync",
 		}
 
@@ -1395,13 +1396,14 @@ func PostSyncWithEndpoint(c *fiber.Ctx) error {
 			sync["release_version_prerelease"] = relMeta.VersionPrerelease
 		}
 
+		// Insert new document (maintain history) instead of updating
 		syncMeta, err := db.Collections["sync"].CreateDocument(ctx, sync)
 		if err != nil {
 			// Update result with error if this was a processed release
 			for i := range results {
-				if results[i].name == relMeta.Name && results[i].version == relMeta.Version {
-					results[i].status = "error"
-					results[i].message = fmt.Sprintf("Failed to save sync: %s", err.Error())
+				if results[i].Name == relMeta.Name && results[i].Version == relMeta.Version {
+					results[i].Status = "error"
+					results[i].Message = fmt.Sprintf("Failed to save sync: %s", err.Error())
 				}
 			}
 			continue
@@ -1412,8 +1414,8 @@ func PostSyncWithEndpoint(c *fiber.Ctx) error {
 
 		// Update result with sync key if this was a processed release
 		for i := range results {
-			if results[i].name == relMeta.Name && results[i].version == relMeta.Version && results[i].status != "unchanged" {
-				results[i].syncKey = syncMeta.Key
+			if results[i].Name == relMeta.Name && results[i].Version == relMeta.Version && results[i].Status != "unchanged" {
+				results[i].SyncKey = syncMeta.Key
 			}
 		}
 	}
@@ -1434,7 +1436,7 @@ func PostSyncWithEndpoint(c *fiber.Ctx) error {
 	errorCount := 0
 
 	for _, result := range results {
-		switch result.status {
+		switch result.Status {
 		case "created":
 			createdCount++
 		case "created_with_sbom":
