@@ -167,7 +167,7 @@ func InitializeDatabase() DBConnection {
 
 	collections = make(map[string]arangodb.Collection)
 	// We keep "metadata" here so the collection is created
-	collectionNames := []string{"release", "sbom", "purl", "cve", "endpoint", "sync", "metadata"}
+	collectionNames := []string{"release", "sbom", "purl", "cve", "endpoint", "sync", "metadata", "cve_lifecycle"}
 
 	for _, collectionName := range collectionNames {
 		var col arangodb.Collection
@@ -277,6 +277,17 @@ func InitializeDatabase() DBConnection {
 		{Collection: "cve2purl", IdxName: "cve2purl_fixed_major", IdxField: "fixed_major"},
 		{Collection: "cve2purl", IdxName: "cve2purl_fixed_minor", IdxField: "fixed_minor"},
 		{Collection: "cve2purl", IdxName: "cve2purl_ecosystem", IdxField: "ecosystem"},
+
+		// CVE Lifecycle collection indexes for MTTR queries
+		{Collection: "cve_lifecycle", IdxName: "lifecycle_cve_id", IdxField: "cve_id"},
+		{Collection: "cve_lifecycle", IdxName: "lifecycle_endpoint", IdxField: "endpoint_name"},
+		{Collection: "cve_lifecycle", IdxName: "lifecycle_release", IdxField: "release_name"},
+		{Collection: "cve_lifecycle", IdxName: "lifecycle_package", IdxField: "package"},
+		{Collection: "cve_lifecycle", IdxName: "lifecycle_severity", IdxField: "severity_rating"},
+		{Collection: "cve_lifecycle", IdxName: "lifecycle_remediated", IdxField: "is_remediated"},
+		{Collection: "cve_lifecycle", IdxName: "lifecycle_introduced_at", IdxField: "introduced_at"},
+		{Collection: "cve_lifecycle", IdxName: "lifecycle_remediated_at", IdxField: "remediated_at"},
+		{Collection: "cve_lifecycle", IdxName: "lifecycle_disclosed_after", IdxField: "disclosed_after_deployment"},
 	}
 
 	for _, idx := range idxList {
@@ -589,6 +600,60 @@ func InitializeDatabase() DBConnection {
 		}
 	}
 
+	// Composite index for MTTR queries - filter by remediation status, severity, and date
+	lifecycleMTTRIdx := "lifecycle_mttr_query"
+	found = false
+	if indexes, err := collections["cve_lifecycle"].Indexes(ctx); err == nil {
+		for _, index := range indexes {
+			if lifecycleMTTRIdx == index.Name {
+				found = true
+				break
+			}
+		}
+	}
+	if !found {
+		compositeIdxOptions := arangodb.CreatePersistentIndexOptions{
+			Unique: &False,
+			Sparse: &False,
+			Name:   lifecycleMTTRIdx,
+		}
+		_, _, err = collections["cve_lifecycle"].EnsurePersistentIndex(ctx,
+			[]string{"is_remediated", "severity_rating", "remediated_at"},
+			&compositeIdxOptions)
+		if err != nil {
+			logger.Sugar().Fatalln("Error creating composite index:", err)
+		} else {
+			logger.Sugar().Infof("Created composite index: %s on cve_lifecycle", lifecycleMTTRIdx)
+		}
+	}
+
+	// Composite index for endpoint-specific CVE tracking
+	lifecycleEndpointCVEIdx := "lifecycle_endpoint_cve"
+	found = false
+	if indexes, err := collections["cve_lifecycle"].Indexes(ctx); err == nil {
+		for _, index := range indexes {
+			if lifecycleEndpointCVEIdx == index.Name {
+				found = true
+				break
+			}
+		}
+	}
+	if !found {
+		compositeIdxOptions := arangodb.CreatePersistentIndexOptions{
+			Unique: &False,
+			Sparse: &False,
+			Name:   lifecycleEndpointCVEIdx,
+		}
+		_, _, err = collections["cve_lifecycle"].EnsurePersistentIndex(ctx,
+			[]string{"endpoint_name", "cve_id", "package", "release_name", "is_remediated"},
+			&compositeIdxOptions)
+		if err != nil {
+			logger.Sugar().Fatalln("Error creating composite index:", err)
+		} else {
+			logger.Sugar().Infof("Created composite index: %s on cve_lifecycle", lifecycleEndpointCVEIdx)
+		}
+	}
+
 	initDone = true
 
 	dbConnection = DBConnection{
@@ -596,7 +661,7 @@ func InitializeDatabase() DBConnection {
 		Collections: collections,
 	}
 
-	logger.Sugar().Infof("Database initialization complete with version-aware indexes")
+	logger.Sugar().Infof("Database initialization complete with version-aware indexes and CVE lifecycle tracking")
 
 	return dbConnection
 }

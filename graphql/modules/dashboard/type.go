@@ -71,3 +71,80 @@ var DashboardGlobalStatusType = graphql.NewObject(graphql.ObjectConfig{
 		"total_delta": &graphql.Field{Type: graphql.Int},
 	},
 })
+
+// ============================================================================
+// MTTR Types
+// ============================================================================
+
+// MTTRBySeverityType represents MTTR metrics for a specific severity level
+var MTTRBySeverityType = graphql.NewObject(graphql.ObjectConfig{
+	Name: "MTTRBySeverity",
+	Fields: graphql.Fields{
+		"severity":    &graphql.Field{Type: graphql.String},
+		"mean_days":   &graphql.Field{Type: graphql.Float},
+		"median_days": &graphql.Field{Type: graphql.Float},
+		"min_days":    &graphql.Field{Type: graphql.Float},
+		"max_days":    &graphql.Field{Type: graphql.Float},
+		"sample_size": &graphql.Field{Type: graphql.Int},
+	},
+})
+
+// MTTRAnalysisType represents the complete MTTR analysis
+var MTTRAnalysisType = graphql.NewObject(graphql.ObjectConfig{
+	Name: "MTTRAnalysis",
+	Fields: graphql.Fields{
+		"by_severity":       &graphql.Field{Type: graphql.NewList(MTTRBySeverityType)},
+		"overall_mean_days": &graphql.Field{Type: graphql.Float},
+		"analysis_period":   &graphql.Field{Type: graphql.Int},
+		"total_remediated":  &graphql.Field{Type: graphql.Int},
+	},
+})
+
+// MTTRTrendPointType represents a single point in MTTR trend over time
+var MTTRTrendPointType = graphql.NewObject(graphql.ObjectConfig{
+	Name: "MTTRTrendPoint",
+	Fields: graphql.Fields{
+		"month":    &graphql.Field{Type: graphql.String},
+		"avg_mttr": &graphql.Field{Type: graphql.Float},
+		"count":    &graphql.Field{Type: graphql.Int},
+	},
+})
+
+// MTTRByEndpointType represents MTTR metrics per endpoint
+var MTTRByEndpointType = graphql.NewObject(graphql.ObjectConfig{
+	Name: "MTTRByEndpoint",
+	Fields: graphql.Fields{
+		"endpoint_name": &graphql.Field{Type: graphql.String},
+		"avg_mttr":      &graphql.Field{Type: graphql.Float},
+		"count":         &graphql.Field{Type: graphql.Int},
+	},
+})
+
+// MTTRByPackageType represents MTTR metrics per package
+var MTTRByPackageType = graphql.NewObject(graphql.ObjectConfig{
+	Name: "MTTRByPackage",
+	Fields: graphql.Fields{
+		"package":  &graphql.Field{Type: graphql.String},
+		"avg_mttr": &graphql.Field{Type: graphql.Float},
+		"count":    &graphql.Field{Type: graphql.Int},
+	},
+})
+
+// MTTRDisclosureStatsType represents MTTR stats for a disclosure type
+var MTTRDisclosureStatsType = graphql.NewObject(graphql.ObjectConfig{
+	Name: "MTTRDisclosureStats",
+	Fields: graphql.Fields{
+		"count":       &graphql.Field{Type: graphql.Int},
+		"mean_mttr":   &graphql.Field{Type: graphql.Float},
+		"median_mttr": &graphql.Field{Type: graphql.Float},
+	},
+})
+
+// MTTRByDisclosureType represents MTTR comparison by disclosure timing
+var MTTRByDisclosureType = graphql.NewObject(graphql.ObjectConfig{
+	Name: "MTTRByDisclosure",
+	Fields: graphql.Fields{
+		"known_at_deployment":        &graphql.Field{Type: MTTRDisclosureStatsType},
+		"disclosed_after_deployment": &graphql.Field{Type: MTTRDisclosureStatsType},
+	},
+})

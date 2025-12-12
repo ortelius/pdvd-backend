@@ -693,3 +693,300 @@ func ResolveDashboardGlobalStatus(db database.DBConnection, limit int) (map[stri
 		"total_delta": totalDelta,
 	}, nil
 }
+
+// ============================================================================
+// MTTR Resolvers
+// ============================================================================
+
+// ResolveMTTR calculates mean time to remediation by severity level
+func ResolveMTTR(db database.DBConnection, days int) (map[string]interface{}, error) {
+	ctx := context.Background()
+	cutoffDate := time.Now().AddDate(0, 0, -days)
+
+	query := `
+		FOR record IN cve_lifecycle
+			FILTER record.is_remediated == true
+			FILTER record.remediated_at >= @cutoffDate
+			FILTER record.days_to_remediate != null
+			
+			COLLECT severity = record.severity_rating INTO group
+			
+			LET durations = group[*].record.days_to_remediate
+			LET sorted = SORTED(durations)
+			LET count = LENGTH(durations)
+			LET mid = FLOOR(count / 2)
+			
+			RETURN {
+				severity: severity,
+				mean_days: AVG(durations),
+				median_days: count % 2 == 0 ? 
+					(sorted[mid - 1] + sorted[mid]) / 2 : 
+					sorted[mid],
+				min_days: MIN(durations),
+				max_days: MAX(durations),
+				sample_size: count
+			}
+	`
+
+	cursor, err := db.Database.Query(ctx, query, &arangodb.QueryOptions{
+		BindVars: map[string]interface{}{
+			"cutoffDate": cutoffDate,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close()
+
+	var bySeverity []map[string]interface{}
+	totalRemediated := 0
+	totalDays := 0.0
+
+	for cursor.HasMore() {
+		var result map[string]interface{}
+		_, err := cursor.ReadDocument(ctx, &result)
+		if err != nil {
+			continue
+		}
+		bySeverity = append(bySeverity, result)
+
+		if sampleSize, ok := result["sample_size"].(int64); ok {
+			totalRemediated += int(sampleSize)
+			if meanDays, ok := result["mean_days"].(float64); ok {
+				totalDays += meanDays * float64(sampleSize)
+			}
+		}
+	}
+
+	overallMean := 0.0
+	if totalRemediated > 0 {
+		overallMean = totalDays / float64(totalRemediated)
+	}
+
+	return map[string]interface{}{
+		"by_severity":       bySeverity,
+		"overall_mean_days": overallMean,
+		"analysis_period":   days,
+		"total_remediated":  totalRemediated,
+	}, nil
+}
+
+// ResolveMTTRTrend calculates MTTR trend over time (monthly)
+func ResolveMTTRTrend(db database.DBConnection, days int) ([]map[string]interface{}, error) {
+	ctx := context.Background()
+	cutoffDate := time.Now().AddDate(0, 0, -days)
+
+	query := `
+		FOR record IN cve_lifecycle
+			FILTER record.is_remediated == true
+			FILTER record.remediated_at >= @cutoffDate
+			FILTER record.days_to_remediate != null
+			
+			COLLECT month = DATE_FORMAT(record.remediated_at, '%Y-%m')
+			AGGREGATE avg_mttr = AVG(record.days_to_remediate),
+					  count = LENGTH(record)
+			
+			SORT month ASC
+			RETURN { 
+				month: month, 
+				avg_mttr: avg_mttr,
+				count: count
+			}
+	`
+
+	cursor, err := db.Database.Query(ctx, query, &arangodb.QueryOptions{
+		BindVars: map[string]interface{}{
+			"cutoffDate": cutoffDate,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close()
+
+	var results []map[string]interface{}
+	for cursor.HasMore() {
+		var result map[string]interface{}
+		_, err := cursor.ReadDocument(ctx, &result)
+		if err != nil {
+			continue
+		}
+		results = append(results, result)
+	}
+
+	return results, nil
+}
+
+// ResolveMTTRByEndpoint calculates MTTR by endpoint
+func ResolveMTTRByEndpoint(db database.DBConnection, days int, limit int) ([]map[string]interface{}, error) {
+	ctx := context.Background()
+	cutoffDate := time.Now().AddDate(0, 0, -days)
+
+	query := `
+		FOR record IN cve_lifecycle
+			FILTER record.is_remediated == true
+			FILTER record.remediated_at >= @cutoffDate
+			FILTER record.days_to_remediate != null
+			
+			COLLECT endpoint = record.endpoint_name
+			AGGREGATE avg_mttr = AVG(record.days_to_remediate),
+					  count = LENGTH(record)
+			
+			FILTER count >= 3  // Minimum sample size
+			SORT avg_mttr ASC
+			LIMIT @limit
+			RETURN { 
+				endpoint_name: endpoint, 
+				avg_mttr: avg_mttr,
+				count: count
+			}
+	`
+
+	cursor, err := db.Database.Query(ctx, query, &arangodb.QueryOptions{
+		BindVars: map[string]interface{}{
+			"cutoffDate": cutoffDate,
+			"limit":      limit,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close()
+
+	var results []map[string]interface{}
+	for cursor.HasMore() {
+		var result map[string]interface{}
+		_, err := cursor.ReadDocument(ctx, &result)
+		if err != nil {
+			continue
+		}
+		results = append(results, result)
+	}
+
+	return results, nil
+}
+
+// ResolveMTTRByPackage calculates MTTR by package (which packages take longest to fix)
+func ResolveMTTRByPackage(db database.DBConnection, days int, limit int) ([]map[string]interface{}, error) {
+	ctx := context.Background()
+	cutoffDate := time.Now().AddDate(0, 0, -days)
+
+	query := `
+		FOR record IN cve_lifecycle
+			FILTER record.is_remediated == true
+			FILTER record.remediated_at >= @cutoffDate
+			FILTER record.days_to_remediate != null
+			
+			COLLECT package = record.package
+			AGGREGATE avg_mttr = AVG(record.days_to_remediate),
+					  count = LENGTH(record)
+			
+			FILTER count >= 3  // Minimum sample size
+			SORT avg_mttr DESC
+			LIMIT @limit
+			RETURN { 
+				package: package, 
+				avg_mttr: avg_mttr,
+				count: count
+			}
+	`
+
+	cursor, err := db.Database.Query(ctx, query, &arangodb.QueryOptions{
+		BindVars: map[string]interface{}{
+			"cutoffDate": cutoffDate,
+			"limit":      limit,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close()
+
+	var results []map[string]interface{}
+	for cursor.HasMore() {
+		var result map[string]interface{}
+		_, err := cursor.ReadDocument(ctx, &result)
+		if err != nil {
+			continue
+		}
+		results = append(results, result)
+	}
+
+	return results, nil
+}
+
+// ResolveMTTRByDisclosureType calculates MTTR comparison by disclosure timing
+func ResolveMTTRByDisclosureType(db database.DBConnection, days int) (map[string]interface{}, error) {
+	ctx := context.Background()
+	cutoffDate := time.Now().AddDate(0, 0, -days)
+
+	query := `
+		FOR record IN cve_lifecycle
+			FILTER record.is_remediated == true
+			FILTER record.remediated_at >= @cutoffDate
+			FILTER record.days_to_remediate != null
+			
+			COLLECT disclosureType = record.disclosed_after_deployment INTO group
+			
+			LET durations = group[*].record.days_to_remediate
+			LET sorted = SORTED(durations)
+			LET count = LENGTH(durations)
+			LET mid = FLOOR(count / 2)
+			
+			RETURN {
+				disclosed_after_deployment: disclosureType,
+				count: count,
+				mean_mttr: AVG(durations),
+				median_mttr: count % 2 == 0 ? 
+					(sorted[mid - 1] + sorted[mid]) / 2 : 
+					sorted[mid]
+			}
+	`
+
+	cursor, err := db.Database.Query(ctx, query, &arangodb.QueryOptions{
+		BindVars: map[string]interface{}{
+			"cutoffDate": cutoffDate,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close()
+
+	type DisclosureStats struct {
+		DisclosedAfterDeployment bool    `json:"disclosed_after_deployment"`
+		Count                    int64   `json:"count"`
+		MeanMTTR                 float64 `json:"mean_mttr"`
+		MedianMTTR               float64 `json:"median_mttr"`
+	}
+
+	knownStats := map[string]interface{}{"count": 0, "mean_mttr": 0.0, "median_mttr": 0.0}
+	postStats := map[string]interface{}{"count": 0, "mean_mttr": 0.0, "median_mttr": 0.0}
+
+	for cursor.HasMore() {
+		var stats DisclosureStats
+		_, err := cursor.ReadDocument(ctx, &stats)
+		if err != nil {
+			continue
+		}
+
+		if stats.DisclosedAfterDeployment {
+			postStats = map[string]interface{}{
+				"count":       int(stats.Count),
+				"mean_mttr":   stats.MeanMTTR,
+				"median_mttr": stats.MedianMTTR,
+			}
+		} else {
+			knownStats = map[string]interface{}{
+				"count":       int(stats.Count),
+				"mean_mttr":   stats.MeanMTTR,
+				"median_mttr": stats.MedianMTTR,
+			}
+		}
+	}
+
+	return map[string]interface{}{
+		"known_at_deployment":        knownStats,
+		"disclosed_after_deployment": postStats,
+	}, nil
+}

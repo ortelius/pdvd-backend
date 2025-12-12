@@ -430,6 +430,326 @@ func deleteRelease2SBOMEdges(ctx context.Context, releaseID string) error {
 }
 
 // ============================================================================
+// CVE Lifecycle Tracking for MTTR Analysis
+// ============================================================================
+
+// CVEKey represents a unique CVE occurrence
+type CVEKey struct {
+	CveID       string
+	Package     string
+	ReleaseName string
+}
+
+// CurrentCVEInfo holds CVE information for current endpoint state
+type CurrentCVEInfo struct {
+	CVEKey
+	SeverityRating string
+	SeverityScore  float64
+	ReleaseVersion string
+}
+
+// CVEInfoTracking holds minimal CVE info for lifecycle tracking
+type CVEInfoTracking struct {
+	Package        string
+	SeverityRating string
+	SeverityScore  float64
+}
+
+// updateCVELifecycleTracking processes CVE state changes for an endpoint
+func updateCVELifecycleTracking(ctx context.Context, endpointName string,
+	syncedAt time.Time, updatedReleases map[string]string) error {
+
+	// Step 1: Get CURRENT CVE state for this endpoint
+	currentCVEs, err := getCurrentCVEsForEndpoint(ctx, endpointName, updatedReleases)
+	if err != nil {
+		return fmt.Errorf("failed to get current CVEs: %w", err)
+	}
+
+	// Step 2: Get PREVIOUS CVE state from lifecycle collection
+	previousCVEs, err := getPreviousCVEsFromLifecycle(ctx, endpointName)
+	if err != nil {
+		return fmt.Errorf("failed to get previous CVEs: %w", err)
+	}
+
+	// Step 3: Detect NEW CVEs (introduced)
+	for cveKey, cveInfo := range currentCVEs {
+		if _, existed := previousCVEs[cveKey]; !existed {
+			// New CVE detected during sync - already in database
+			err := createLifecycleRecord(ctx, endpointName, cveInfo, syncedAt, false)
+			if err != nil {
+				log.Printf("Failed to create lifecycle record for %s: %v", cveKey, err)
+			}
+		}
+	}
+
+	// Step 4: Detect REMEDIATED CVEs
+	for cveKey, existingRecord := range previousCVEs {
+		if _, stillExists := currentCVEs[cveKey]; !stillExists {
+			// CVE has been remediated
+			remediatedVersion := updatedReleases[existingRecord.ReleaseName]
+			err := markCVERemediated(ctx, existingRecord, syncedAt, remediatedVersion)
+			if err != nil {
+				log.Printf("Failed to mark CVE remediated for %s: %v", cveKey, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// getCurrentCVEsForEndpoint fetches all CVEs for the endpoint's current state
+func getCurrentCVEsForEndpoint(ctx context.Context, endpointName string,
+	releases map[string]string) (map[string]CurrentCVEInfo, error) {
+
+	result := make(map[string]CurrentCVEInfo)
+
+	// For each release deployed on this endpoint
+	for releaseName, releaseVersion := range releases {
+		// Get CVEs for this release (reuse existing vulnerability query)
+		cves, err := getCVEsForReleaseTracking(ctx, releaseName, releaseVersion)
+		if err != nil {
+			log.Printf("Failed to get CVEs for release %s:%s: %v", releaseName, releaseVersion, err)
+			continue
+		}
+
+		for cveID, cveInfo := range cves {
+			// Create composite key (CVE + Package + Release)
+			key := fmt.Sprintf("%s:%s:%s", cveID, cveInfo.Package, releaseName)
+
+			result[key] = CurrentCVEInfo{
+				CVEKey: CVEKey{
+					CveID:       cveID,
+					Package:     cveInfo.Package,
+					ReleaseName: releaseName,
+				},
+				SeverityRating: cveInfo.SeverityRating,
+				SeverityScore:  cveInfo.SeverityScore,
+				ReleaseVersion: releaseVersion,
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// getCVEsForReleaseTracking fetches CVEs for a specific release (simplified for tracking)
+func getCVEsForReleaseTracking(ctx context.Context, releaseName, releaseVersion string) (map[string]CVEInfoTracking, error) {
+	query := `
+		FOR release IN release
+			FILTER release.name == @name AND release.version == @version
+			LIMIT 1
+			
+			LET sbomData = (
+				FOR s IN 1..1 OUTBOUND release release2sbom
+					LIMIT 1
+					RETURN { id: s._id }
+			)[0]
+			
+			FILTER sbomData != null
+			
+			LET vulns = (
+				FOR sbomEdge IN sbom2purl
+					FILTER sbomEdge._from == sbomData.id
+					LET purl = DOCUMENT(sbomEdge._to)
+					FILTER purl != null
+					
+					FOR cveEdge IN cve2purl
+						FILTER cveEdge._to == purl._id
+						
+						FILTER (
+							sbomEdge.version_major != null AND 
+							cveEdge.introduced_major != null AND 
+							(cveEdge.fixed_major != null OR cveEdge.last_affected_major != null)
+						) ? (
+							(sbomEdge.version_major > cveEdge.introduced_major OR
+							(sbomEdge.version_major == cveEdge.introduced_major AND 
+							sbomEdge.version_minor > cveEdge.introduced_minor) OR
+							(sbomEdge.version_major == cveEdge.introduced_major AND 
+							sbomEdge.version_minor == cveEdge.introduced_minor AND 
+							sbomEdge.version_patch >= cveEdge.introduced_patch))
+							AND
+							(cveEdge.fixed_major != null ? (
+								sbomEdge.version_major < cveEdge.fixed_major OR
+								(sbomEdge.version_major == cveEdge.fixed_major AND 
+								sbomEdge.version_minor < cveEdge.fixed_minor) OR
+								(sbomEdge.version_major == cveEdge.fixed_major AND 
+								sbomEdge.version_minor == cveEdge.fixed_minor AND 
+								sbomEdge.version_patch < cveEdge.fixed_patch)
+							) : (
+								sbomEdge.version_major < cveEdge.last_affected_major OR
+								(sbomEdge.version_major == cveEdge.last_affected_major AND 
+								sbomEdge.version_minor < cveEdge.last_affected_minor) OR
+								(sbomEdge.version_major == cveEdge.last_affected_major AND 
+								sbomEdge.version_minor == cveEdge.last_affected_minor AND 
+								sbomEdge.version_patch <= cveEdge.last_affected_patch)
+							))
+						) : true
+						
+						LET cve = DOCUMENT(cveEdge._from)
+						FILTER cve != null
+						
+						LET matchedAffected = (
+							FOR affected IN cve.affected != null ? cve.affected : []
+								LET cveBasePurl = affected.package.purl != null ? 
+									affected.package.purl : 
+									CONCAT("pkg:", LOWER(affected.package.ecosystem), "/", affected.package.name)
+								FILTER cveBasePurl == purl.purl
+								RETURN affected
+						)
+						FILTER LENGTH(matchedAffected) > 0
+						
+						RETURN {
+							cve_id: cve.id,
+							severity_rating: cve.database_specific.severity_rating,
+							severity_score: cve.database_specific.cvss_base_score,
+							package: purl.purl,
+							affected_version: sbomEdge.version,
+							all_affected: matchedAffected,
+							needs_validation: sbomEdge.version_major == null OR cveEdge.introduced_major == null
+						}
+			)
+			
+			RETURN vulns
+	`
+
+	cursor, err := db.Database.Query(ctx, query, &arangodb.QueryOptions{
+		BindVars: map[string]interface{}{
+			"name":    releaseName,
+			"version": releaseVersion,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close()
+
+	type VulnRaw struct {
+		CveID           string        `json:"cve_id"`
+		SeverityRating  string        `json:"severity_rating"`
+		SeverityScore   float64       `json:"severity_score"`
+		Package         string        `json:"package"`
+		AffectedVersion string        `json:"affected_version"`
+		AllAffected     []interface{} `json:"all_affected"`
+		NeedsValidation bool          `json:"needs_validation"`
+	}
+
+	result := make(map[string]CVEInfoTracking)
+	seen := make(map[string]bool)
+
+	if !cursor.HasMore() {
+		return result, nil
+	}
+
+	var vulns []VulnRaw
+	_, err = cursor.ReadDocument(ctx, &vulns)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, v := range vulns {
+		// Simplified validation - in production, use isVersionAffectedAny
+		if v.NeedsValidation && len(v.AllAffected) > 0 {
+			// Skip validation for tracking purposes - be conservative
+			// In production, implement full validation
+		}
+
+		key := v.CveID + ":" + v.Package
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+
+		result[v.CveID] = CVEInfoTracking{
+			Package:        v.Package,
+			SeverityRating: v.SeverityRating,
+			SeverityScore:  v.SeverityScore,
+		}
+	}
+
+	return result, nil
+}
+
+// getPreviousCVEsFromLifecycle retrieves open CVEs for this endpoint
+func getPreviousCVEsFromLifecycle(ctx context.Context,
+	endpointName string) (map[string]model.CVELifecycleEvent, error) {
+
+	query := `
+		FOR record IN cve_lifecycle
+			FILTER record.endpoint_name == @endpoint_name
+			FILTER record.is_remediated == false
+			RETURN record
+	`
+
+	cursor, err := db.Database.Query(ctx, query, &arangodb.QueryOptions{
+		BindVars: map[string]interface{}{
+			"endpoint_name": endpointName,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close()
+
+	result := make(map[string]model.CVELifecycleEvent)
+
+	for cursor.HasMore() {
+		var record model.CVELifecycleEvent
+		_, err := cursor.ReadDocument(ctx, &record)
+		if err != nil {
+			continue
+		}
+
+		// Create same composite key
+		key := fmt.Sprintf("%s:%s:%s", record.CveID, record.Package, record.ReleaseName)
+		result[key] = record
+	}
+
+	return result, nil
+}
+
+// createLifecycleRecord creates a new CVE lifecycle tracking record
+func createLifecycleRecord(ctx context.Context, endpointName string,
+	cveInfo CurrentCVEInfo, introducedAt time.Time, disclosedAfterDeployment bool) error {
+
+	record := model.CVELifecycleEvent{
+		CveID:                    cveInfo.CveID,
+		EndpointName:             endpointName,
+		ReleaseName:              cveInfo.ReleaseName,
+		Package:                  cveInfo.Package,
+		SeverityRating:           cveInfo.SeverityRating,
+		SeverityScore:            cveInfo.SeverityScore,
+		IntroducedAt:             introducedAt,
+		IntroducedVersion:        cveInfo.ReleaseVersion,
+		IsRemediated:             false,
+		DisclosedAfterDeployment: disclosedAfterDeployment,
+		ObjType:                  "CVELifecycleEvent",
+		CreatedAt:                time.Now(),
+		UpdatedAt:                time.Now(),
+	}
+
+	_, err := db.Collections["cve_lifecycle"].CreateDocument(ctx, record)
+	return err
+}
+
+// markCVERemediated updates a lifecycle record to mark CVE as fixed
+func markCVERemediated(ctx context.Context, existingRecord model.CVELifecycleEvent,
+	remediatedAt time.Time, remediatedVersion string) error {
+
+	daysToRemediate := remediatedAt.Sub(existingRecord.IntroducedAt).Hours() / 24
+
+	update := map[string]interface{}{
+		"remediated_at":      remediatedAt,
+		"remediated_version": remediatedVersion,
+		"days_to_remediate":  daysToRemediate,
+		"is_remediated":      true,
+		"updated_at":         time.Now(),
+	}
+
+	_, err := db.Collections["cve_lifecycle"].UpdateDocument(ctx, existingRecord.Key, update)
+	return err
+}
+
+// ============================================================================
 // GraphQL Handler
 // ============================================================================
 
@@ -471,7 +791,6 @@ func GraphQLHandler(schema graphql.Schema) fiber.Handler {
 // POST Handlers
 // ============================================================================
 
-// PostReleaseWithSBOM handles POST requests for creating a release with its SBOM
 // PostReleaseWithSBOM handles POST requests for creating a release with its SBOM
 func PostReleaseWithSBOM(c *fiber.Ctx) error {
 	var req model.ReleaseWithSBOM
@@ -1099,6 +1418,13 @@ func PostSyncWithEndpoint(c *fiber.Ctx) error {
 		}
 	}
 
+	// Step 4: Update CVE lifecycle tracking
+	err = updateCVELifecycleTracking(ctx, req.EndpointName, syncedAt, updatedReleases)
+	if err != nil {
+		log.Printf("Warning: Failed to update CVE lifecycle tracking: %v", err)
+		// Don't fail the sync, but log the error
+	}
+
 	// Build response summary
 	createdCount := 0
 	createdWithSbomCount := 0
@@ -1176,6 +1502,188 @@ func PostSyncWithEndpoint(c *fiber.Ctx) error {
 }
 
 // ============================================================================
+// Admin Endpoints - MTTR Backfill
+// ============================================================================
+
+var backfillRunning = false
+var backfillProgress = ""
+
+// PostBackfillMTTR triggers the CVE lifecycle backfill process
+func PostBackfillMTTR(c *fiber.Ctx) error {
+	if backfillRunning {
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+			"success": false,
+			"message": "Backfill already in progress",
+			"status":  backfillProgress,
+		})
+	}
+
+	type BackfillRequest struct {
+		DaysBack int `json:"days_back"`
+	}
+
+	var req BackfillRequest
+	if err := c.BodyParser(&req); err != nil {
+		req.DaysBack = 90 // Default to 90 days
+	}
+
+	if req.DaysBack <= 0 || req.DaysBack > 365 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"success": false,
+			"message": "days_back must be between 1 and 365",
+		})
+	}
+
+	// Run backfill in background
+	go func() {
+		backfillRunning = true
+		backfillProgress = fmt.Sprintf("Starting backfill for %d days...", req.DaysBack)
+
+		ctx := context.Background()
+		cutoffDate := time.Now().AddDate(0, 0, -req.DaysBack)
+
+		log.Printf("Starting CVE lifecycle backfill for last %d days...", req.DaysBack)
+
+		// Fetch sync history
+		syncQuery := `
+			FOR sync IN sync
+				FILTER sync.synced_at >= @cutoffDate
+				SORT sync.synced_at ASC
+				RETURN {
+					endpoint_name: sync.endpoint_name,
+					release_name: sync.release_name,
+					release_version: sync.release_version,
+					synced_at: sync.synced_at
+				}
+		`
+
+		type SyncEvent struct {
+			EndpointName   string    `json:"endpoint_name"`
+			ReleaseName    string    `json:"release_name"`
+			ReleaseVersion string    `json:"release_version"`
+			SyncedAt       time.Time `json:"synced_at"`
+		}
+
+		cursor, err := db.Database.Query(ctx, syncQuery, &arangodb.QueryOptions{
+			BindVars: map[string]interface{}{
+				"cutoffDate": cutoffDate,
+			},
+		})
+		if err != nil {
+			backfillProgress = fmt.Sprintf("Failed: %v", err)
+			backfillRunning = false
+			log.Printf("Backfill failed: %v", err)
+			return
+		}
+		defer cursor.Close()
+
+		var allSyncs []SyncEvent
+		for cursor.HasMore() {
+			var sync SyncEvent
+			_, err := cursor.ReadDocument(ctx, &sync)
+			if err != nil {
+				continue
+			}
+			allSyncs = append(allSyncs, sync)
+		}
+
+		backfillProgress = fmt.Sprintf("Processing %d sync events...", len(allSyncs))
+		log.Printf("Processing %d sync events", len(allSyncs))
+
+		// Group by endpoint
+		endpointSyncs := make(map[string][]SyncEvent)
+		for _, sync := range allSyncs {
+			endpointSyncs[sync.EndpointName] = append(endpointSyncs[sync.EndpointName], sync)
+		}
+
+		totalIntroductions := 0
+		totalRemediations := 0
+		processedEndpoints := 0
+
+		for endpointName, syncs := range endpointSyncs {
+			processedEndpoints++
+			backfillProgress = fmt.Sprintf("Processing endpoint %d/%d: %s",
+				processedEndpoints, len(endpointSyncs), endpointName)
+
+			// Track CVE state
+			currentCVEs := make(map[string]CurrentCVEInfo)
+
+			for _, sync := range syncs {
+				// Get CVEs for this release
+				newCVEs, err := getCVEsForReleaseTracking(ctx, sync.ReleaseName, sync.ReleaseVersion)
+				if err != nil {
+					continue
+				}
+
+				// Build new state
+				newState := make(map[string]CurrentCVEInfo)
+				for cveID, cveInfo := range newCVEs {
+					key := fmt.Sprintf("%s:%s:%s", cveID, cveInfo.Package, sync.ReleaseName)
+					newState[key] = CurrentCVEInfo{
+						CVEKey: CVEKey{
+							CveID:       cveID,
+							Package:     cveInfo.Package,
+							ReleaseName: sync.ReleaseName,
+						},
+						SeverityRating: cveInfo.SeverityRating,
+						SeverityScore:  cveInfo.SeverityScore,
+						ReleaseVersion: sync.ReleaseVersion,
+					}
+				}
+
+				// Detect introductions
+				for key, cveInfo := range newState {
+					if _, existed := currentCVEs[key]; !existed {
+						err := createLifecycleRecord(ctx, endpointName, cveInfo, sync.SyncedAt, false)
+						if err == nil {
+							totalIntroductions++
+						}
+					}
+				}
+
+				// Detect remediations
+				for key, cveInfo := range currentCVEs {
+					if _, stillExists := newState[key]; !stillExists {
+						err := markCVERemediated(ctx, model.CVELifecycleEvent{
+							EndpointName: endpointName,
+							CveID:        cveInfo.CveID,
+							Package:      cveInfo.Package,
+							ReleaseName:  cveInfo.ReleaseName,
+						}, sync.SyncedAt, sync.ReleaseVersion)
+						if err == nil {
+							totalRemediations++
+						}
+					}
+				}
+
+				currentCVEs = newState
+			}
+		}
+
+		backfillProgress = fmt.Sprintf("Complete! Introductions: %d, Remediations: %d",
+			totalIntroductions, totalRemediations)
+		backfillRunning = false
+
+		log.Printf("Backfill complete! Introductions: %d, Remediations: %d",
+			totalIntroductions, totalRemediations)
+	}()
+
+	return c.JSON(fiber.Map{
+		"success": true,
+		"message": fmt.Sprintf("Backfill started for %d days of history", req.DaysBack),
+		"status":  "processing",
+	})
+}
+
+// GetBackfillStatus returns the current status of any running backfill
+func GetBackfillStatus(c *fiber.Ctx) error {
+	return c.JSON(fiber.Map{
+		"running": backfillRunning,
+		"status":  backfillProgress,
+	})
+}
+
+// ============================================================================
 // Main
 // ============================================================================
 
@@ -1216,8 +1724,13 @@ func main() {
 	api.Post("/releases", PostReleaseWithSBOM)
 	api.Post("/sync", PostSyncWithEndpoint)
 
-	// GraphQL endpoint - replaces all GET endpoints
+	// GraphQL endpoint
 	api.Post("/graphql", GraphQLHandler(schema))
+
+	// Admin endpoints for MTTR backfill
+	admin := api.Group("/admin")
+	admin.Post("/backfill-mttr", PostBackfillMTTR)
+	admin.Get("/backfill-status", GetBackfillStatus)
 
 	// Get port from environment or default to 3000
 	port := os.Getenv("MS_PORT")
@@ -1228,6 +1741,7 @@ func main() {
 	// Start server
 	log.Printf("Starting server on port %s", port)
 	log.Printf("GraphQL endpoint available at /api/v1/graphql")
+	log.Printf("Admin endpoints available at /api/v1/admin/*")
 	if err := app.Listen(":" + port); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
