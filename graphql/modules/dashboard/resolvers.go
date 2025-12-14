@@ -261,15 +261,16 @@ func ResolveMTTR(db database.DBConnection, days int) (map[string]interface{}, er
 					mttr_post_deployment: mttr_post,
 					fixed_within_sla_pct: pct_fixed_sla,
 					backlog_count: count_open,
+					open_count: count_open,
 					mean_open_age: mean_age,
 					mean_open_age_post_deploy: mean_age_post,
 					oldest_open_days: oldest_days,
 					open_beyond_sla_pct: pct_open_sla,
+					open_beyond_sla_count: open_beyond_sla,
 					new_detected: new_detected,
 					remediated: count_fixed,
 					// Helpers for aggregation
-					open_post_count: count_open_post,
-					open_beyond_sla_count: open_beyond_sla
+					open_post_count: count_open_post
 				}
 		)
 
@@ -295,9 +296,11 @@ func ResolveMTTR(db database.DBConnection, days int) (map[string]interface{}, er
 		)
 
 		// 5. Executive Summary Aggregation (Section G)
+		LET total_fixed = SUM(severity_groups[*].remediated)
+		
 		LET exec_summary = {
 			total_new_cves: SUM(severity_groups[*].new_detected),
-			total_fixed_cves: SUM(severity_groups[*].remediated),
+			total_fixed_cves: total_fixed,
 			post_deployment_cves: SUM(severity_groups[*].open_post_count),
 			
 			// Averages across severity groups
@@ -310,6 +313,9 @@ func ResolveMTTR(db database.DBConnection, days int) (map[string]interface{}, er
 			// Global % Open Beyond SLA
 			open_cves_beyond_sla_pct: SUM(severity_groups[*].backlog_count) > 0 ? 
 				(SUM(severity_groups[*].open_beyond_sla_count) / SUM(severity_groups[*].backlog_count)) * 100 : 0,
+
+			// Global % Fixed Within SLA
+			fixed_within_sla_pct: total_fixed > 0 ? AVG(severity_groups[*].fixed_within_sla_pct) : 0,
 
 			// B.4 Oldest Open Critical
 			oldest_open_critical_days: MAX(
@@ -352,22 +358,25 @@ func ResolveMTTR(db database.DBConnection, days int) (map[string]interface{}, er
 		MeanOpenAge            float64 `json:"mean_open_age_all"`
 		MeanOpenAgePost        float64 `json:"mean_open_age_post_deploy"`
 		OpenBeyondSLAPct       float64 `json:"open_cves_beyond_sla_pct"`
+		FixedWithinSLAPct      float64 `json:"fixed_within_sla_pct"`
 		OldestOpenCriticalDays float64 `json:"oldest_open_critical_days"`
 		BacklogDelta           int     `json:"backlog_delta"`
 	}
 
 	type SeverityRow struct {
-		Severity          string  `json:"severity"`
-		MTTR              float64 `json:"mttr"`
-		MTTRPost          float64 `json:"mttr_post_deployment"`
-		FixedWithinSLAPct float64 `json:"fixed_within_sla_pct"`
-		BacklogCount      int     `json:"backlog_count"`
-		MeanOpenAge       float64 `json:"mean_open_age"`
-		MeanOpenAgePost   float64 `json:"mean_open_age_post_deploy"`
-		OldestOpenDays    float64 `json:"oldest_open_days"`
-		OpenBeyondSLAPct  float64 `json:"open_beyond_sla_pct"`
-		NewDetected       int     `json:"new_detected"`
-		Remediated        int     `json:"remediated"`
+		Severity             string  `json:"severity"`
+		MTTR                 float64 `json:"mttr"`
+		MTTRPost             float64 `json:"mttr_post_deployment"`
+		FixedWithinSLAPct    float64 `json:"fixed_within_sla_pct"`
+		BacklogCount         int     `json:"backlog_count"`
+		OpenCount            int     `json:"open_count"`
+		MeanOpenAge          float64 `json:"mean_open_age"`
+		MeanOpenAgePost      float64 `json:"mean_open_age_post_deploy"`
+		OldestOpenDays       float64 `json:"oldest_open_days"`
+		OpenBeyondSLAPct     float64 `json:"open_beyond_sla_pct"`
+		OpenBeyondSLACount   int     `json:"open_beyond_sla_count"`
+		NewDetected          int     `json:"new_detected"`
+		Remediated           int     `json:"remediated"`
 	}
 
 	type ImpactCount struct {

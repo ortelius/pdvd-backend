@@ -1343,7 +1343,6 @@ func PostSyncWithEndpoint(c *fiber.Ctx) error {
 
 	// Step 3: Create sync records for the COMPLETE new state
 	// REVISED: Always create new sync records to maintain history (Trend Analysis)
-	var syncKeys []string
 	syncedCount := 0
 
 	for releaseName, releaseVersion := range updatedReleases {
@@ -1427,7 +1426,6 @@ func PostSyncWithEndpoint(c *fiber.Ctx) error {
 			continue
 		}
 
-		syncKeys = append(syncKeys, syncMeta.Key)
 		syncedCount++
 
 		// Update result with sync key if this was a processed release

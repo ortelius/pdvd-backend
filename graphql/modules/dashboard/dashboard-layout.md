@@ -12,11 +12,11 @@
 ## 1. SLA Reference Table (for calculations)
 
 | Severity | Default SLA (days) | High-Risk Endpoint SLA (days) |
-|----------|-----------------|-----------------------------|
-| Critical | 15 | 7 |
-| High | 30 | 15 |
-| Medium | 90 | 90 |
-| Low | 180 | 180 |
+|----------|--------------------|-------------------------------|
+| Critical | 15                 | 7                             |
+| High     | 30                 | 15                            |
+| Medium   | 90                 | 90                            |
+| Low      | 180                | 180                           |
 
 - **Clock starts at detection** (first confirmed impact on deployed endpoint)  
 - Applies to **post-deployment CVEs** and pre-deployment CVEs that reach production.
@@ -208,17 +208,17 @@
 
 ### G. Executive Summary Block
 
-| Metric | Value |
-|--------|------|
-| Total new CVEs detected (endpoint) | X |
-| Post-deployment CVEs | Y |
-| MTTR – All endpoints | Z days |
-| MTTR – Post-deployment | A days |
-| Mean open age – all | B days |
-| Mean open age – post-deployment | C days |
-| % open CVEs beyond SLA | D% |
+| Metric                                   | Value  |
+|------------------------------------------|--------|
+| Total new CVEs detected (endpoint)       | X      |
+| Post-deployment CVEs                     | Y      |
+| MTTR – All endpoints                     | Z days |
+| MTTR – Post-deployment                   | A days |
+| Mean open age – all                      | B days |
+| Mean open age – post-deployment          | C days |
+| % open CVEs beyond SLA                   | D%     |
 | Oldest open post-deployment critical CVE | E days |
-| Backlog delta | F |
+| Backlog delta                            | F      |
 
 ---
 

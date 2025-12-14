@@ -90,6 +90,7 @@ var ExecutiveSummaryType = graphql.NewObject(graphql.ObjectConfig{
 		"open_cves_beyond_sla_pct":  &graphql.Field{Type: graphql.Float}, // Section C.1
 		"oldest_open_critical_days": &graphql.Field{Type: graphql.Float}, // Section B.4
 		"backlog_delta":             &graphql.Field{Type: graphql.Int},   // Section D.3
+		"fixed_within_sla_pct":      &graphql.Field{Type: graphql.Float}, // Section C.2 - Added for frontend
 	},
 })
 
@@ -110,12 +111,14 @@ var DetailedSeverityMetricsType = graphql.NewObject(graphql.ObjectConfig{
 		"oldest_open_days":          &graphql.Field{Type: graphql.Float}, // B.4
 
 		// C. SLA Compliance
-		"open_beyond_sla_pct": &graphql.Field{Type: graphql.Float}, // C.1
+		"open_beyond_sla_pct":   &graphql.Field{Type: graphql.Float}, // C.1 percentage
+		"open_beyond_sla_count": &graphql.Field{Type: graphql.Int},   // C.1 count - NEW FIELD
 
 		// D. Volume & Flow
 		"new_detected":  &graphql.Field{Type: graphql.Int}, // D.1
 		"remediated":    &graphql.Field{Type: graphql.Int}, // D.2
-		"backlog_count": &graphql.Field{Type: graphql.Int}, // Current Open Count
+		"backlog_count": &graphql.Field{Type: graphql.Int}, // Current Open Count (legacy name)
+		"open_count":    &graphql.Field{Type: graphql.Int}, // Current Open Count - NEW FIELD (same as backlog_count)
 	},
 })
 
