@@ -1,3 +1,4 @@
+---
 name: Build/Push Image and Release Charts
 "on":
   pull_request:
