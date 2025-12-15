@@ -32,7 +32,7 @@ func ResolveSeverityDistribution(_ database.DBConnection) (interface{}, error) {
 }
 
 // ResolveTopRisks fetches the top risky assets based on type
-func ResolveTopRisks(_ database.DBConnection, _ string, limit int) (interface{}, error) {
+func ResolveTopRisks(_ database.DBConnection, _ string, _ int) (interface{}, error) {
 	// Placeholder logic
 	var risks []map[string]interface{}
 	return risks, nil
@@ -141,7 +141,7 @@ func ResolveVulnerabilityTrend(db database.DBConnection, days int) ([]map[string
 }
 
 // ResolveDashboardGlobalStatus calculates aggregated vulnerability counts and deltas
-func ResolveDashboardGlobalStatus(db database.DBConnection, limit int) (map[string]interface{}, error) {
+func ResolveDashboardGlobalStatus(_ database.DBConnection, _ int) (map[string]interface{}, error) {
 	// Placeholder - matches simple response for now
 	return map[string]interface{}{
 		"critical":    map[string]int{"count": 0, "delta": 0},
@@ -364,19 +364,19 @@ func ResolveMTTR(db database.DBConnection, days int) (map[string]interface{}, er
 	}
 
 	type SeverityRow struct {
-		Severity             string  `json:"severity"`
-		MTTR                 float64 `json:"mttr"`
-		MTTRPost             float64 `json:"mttr_post_deployment"`
-		FixedWithinSLAPct    float64 `json:"fixed_within_sla_pct"`
-		BacklogCount         int     `json:"backlog_count"`
-		OpenCount            int     `json:"open_count"`
-		MeanOpenAge          float64 `json:"mean_open_age"`
-		MeanOpenAgePost      float64 `json:"mean_open_age_post_deploy"`
-		OldestOpenDays       float64 `json:"oldest_open_days"`
-		OpenBeyondSLAPct     float64 `json:"open_beyond_sla_pct"`
-		OpenBeyondSLACount   int     `json:"open_beyond_sla_count"`
-		NewDetected          int     `json:"new_detected"`
-		Remediated           int     `json:"remediated"`
+		Severity           string  `json:"severity"`
+		MTTR               float64 `json:"mttr"`
+		MTTRPost           float64 `json:"mttr_post_deployment"`
+		FixedWithinSLAPct  float64 `json:"fixed_within_sla_pct"`
+		BacklogCount       int     `json:"backlog_count"`
+		OpenCount          int     `json:"open_count"`
+		MeanOpenAge        float64 `json:"mean_open_age"`
+		MeanOpenAgePost    float64 `json:"mean_open_age_post_deploy"`
+		OldestOpenDays     float64 `json:"oldest_open_days"`
+		OpenBeyondSLAPct   float64 `json:"open_beyond_sla_pct"`
+		OpenBeyondSLACount int     `json:"open_beyond_sla_count"`
+		NewDetected        int     `json:"new_detected"`
+		Remediated         int     `json:"remediated"`
 	}
 
 	type ImpactCount struct {
