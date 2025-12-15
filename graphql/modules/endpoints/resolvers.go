@@ -3,6 +3,7 @@ package endpoints
 
 import (
 	"context"
+	"encoding/json"
 	"net/url"
 
 	"github.com/arangodb/go-driver/v2/arangodb"
@@ -11,16 +12,8 @@ import (
 	"github.com/ortelius/pdvd-backend/v12/util"
 )
 
-func isVersionAffectedAny(version string, allAffected []models.Affected) bool {
-	for _, affected := range allAffected {
-		if util.IsVersionAffected(version, affected) {
-			return true
-		}
-	}
-	return false
-}
-
 // ResolveEndpointDetails - returns detailed endpoint information with vulnerabilities
+// REFACTORED: Now uses release2cve materialized edges instead of complex AQL filtering
 func ResolveEndpointDetails(db database.DBConnection, endpointName string) (map[string]interface{}, error) {
 	ctx := context.Background()
 
@@ -162,13 +155,14 @@ func ResolveEndpointDetails(db database.DBConnection, endpointName string) (map[
 
 	// ========================================================================
 	// STEP 3: Vulnerability Batch Query
-	// Fetch vulns using original robust AQL filtering
+	// REFACTORED: Use release2cve materialized edges (pre-validated at write-time)
 	// ========================================================================
 
 	// Map to store results: "name:version" -> []VulnMatch
 	releaseVulnMap := make(map[string][]map[string]interface{})
 
 	if len(releasesToFetch) > 0 {
+		// REFACTORED: Simple edge traversal instead of complex filtering
 		vulnQuery := `
 			FOR target IN @targets
 				LET releaseDoc = (
@@ -195,72 +189,24 @@ func ResolveEndpointDetails(db database.DBConnection, endpointName string) (map[
 						RETURN 1
 				)
 				
-				// Get Vulnerabilities using Original Robust Filter
+				// Get Vulnerabilities using release2cve materialized edges
+				// Edges are pre-validated during ingestion - no filtering needed
 				LET vulns = (
-					FILTER sbomData != null
-					FOR sbomEdge IN sbom2purl
-						FILTER sbomEdge._from == sbomData.id
-						LET purl = DOCUMENT(sbomEdge._to)
-						FILTER purl != null
-						
-						FOR cveEdge IN cve2purl
-							FILTER cveEdge._to == purl._id
+					FOR cve, edge IN 1..1 OUTBOUND releaseDoc release2cve
+						RETURN {
+							cve_id: cve.id,
+							summary: cve.summary,
+							severity_score: cve.database_specific.cvss_base_score,
+							severity_rating: cve.database_specific.severity_rating,
 							
-							// ORIGINAL ROBUST FILTER: Handles semantic version comparison in AQL
-							FILTER (
-								sbomEdge.version_major != null AND 
-								cveEdge.introduced_major != null AND 
-								(cveEdge.fixed_major != null OR cveEdge.last_affected_major != null)
-							) ? (
-								(sbomEdge.version_major > cveEdge.introduced_major OR
-								(sbomEdge.version_major == cveEdge.introduced_major AND 
-								sbomEdge.version_minor > cveEdge.introduced_minor) OR
-								(sbomEdge.version_major == cveEdge.introduced_major AND 
-								sbomEdge.version_minor == cveEdge.introduced_minor AND 
-								sbomEdge.version_patch >= cveEdge.introduced_patch))
-								AND
-								(cveEdge.fixed_major != null ? (
-									sbomEdge.version_major < cveEdge.fixed_major OR
-									(sbomEdge.version_major == cveEdge.fixed_major AND 
-									sbomEdge.version_minor < cveEdge.fixed_minor) OR
-									(sbomEdge.version_major == cveEdge.fixed_major AND 
-									sbomEdge.version_minor == cveEdge.fixed_minor AND 
-									sbomEdge.version_patch < cveEdge.fixed_patch)
-								) : (
-									sbomEdge.version_major < cveEdge.last_affected_major OR
-									(sbomEdge.version_major == cveEdge.last_affected_major AND 
-									sbomEdge.version_minor < cveEdge.last_affected_minor) OR
-									(sbomEdge.version_major == cveEdge.last_affected_major AND 
-									sbomEdge.version_minor == cveEdge.last_affected_minor AND 
-									sbomEdge.version_patch <= cveEdge.last_affected_patch)
-								))
-							) : true
+							// Retrieved directly from materialized edge
+							package: edge.package_purl,
+							affected_version: edge.package_version,
+							full_purl: edge.package_purl,
 							
-							LET cve = DOCUMENT(cveEdge._from)
-							FILTER cve != null
-							
-							LET matchedAffected = (
-								FOR affected IN cve.affected != null ? cve.affected : []
-									LET cveBasePurl = affected.package.purl != null ? 
-										affected.package.purl : 
-										CONCAT("pkg:", LOWER(affected.package.ecosystem), "/", affected.package.name)
-									FILTER cveBasePurl == purl.purl
-									RETURN affected
-							)
-							FILTER LENGTH(matchedAffected) > 0
-							
-							RETURN {
-								cve_id: cve.id,
-								summary: cve.summary,
-								severity_score: cve.database_specific.cvss_base_score,
-								severity_rating: cve.database_specific.severity_rating,
-								package: purl.purl,
-								affected_version: sbomEdge.version,
-								full_purl: sbomEdge.full_purl,
-								all_affected: matchedAffected,
-								// ORIGINAL LOGIC: Only validate in Go if AQL couldn't decide (majors are null)
-								needs_validation: sbomEdge.version_major == null OR cveEdge.introduced_major == null
-							}
+							// Still needed for fixed_in calculation
+							all_affected: cve.affected
+						}
 				)
 				
 				RETURN {
@@ -282,15 +228,14 @@ func ResolveEndpointDetails(db database.DBConnection, endpointName string) (map[
 		defer vCursor.Close()
 
 		type VulnRaw struct {
-			CveID           string            `json:"cve_id"`
-			Summary         string            `json:"summary"`
-			SeverityScore   float64           `json:"severity_score"`
-			SeverityRating  string            `json:"severity_rating"`
-			Package         string            `json:"package"`
-			AffectedVersion string            `json:"affected_version"`
-			FullPurl        string            `json:"full_purl"`
-			AllAffected     []models.Affected `json:"all_affected"`
-			NeedsValidation bool              `json:"needs_validation"`
+			CveID           string                   `json:"cve_id"`
+			Summary         string                   `json:"summary"`
+			SeverityScore   float64                  `json:"severity_score"`
+			SeverityRating  string                   `json:"severity_rating"`
+			Package         string                   `json:"package"`
+			AffectedVersion string                   `json:"affected_version"`
+			FullPurl        string                   `json:"full_purl"`
+			AllAffected     []map[string]interface{} `json:"all_affected"`
 		}
 
 		type ReleaseResult struct {
@@ -307,22 +252,13 @@ func ResolveEndpointDetails(db database.DBConnection, endpointName string) (map[
 				continue
 			}
 
-			// Validate and Store
+			// NO VALIDATION NEEDED - edges are pre-validated during ingestion
+			// Just perform local deduplication
 			var validVulns []map[string]interface{}
 			seen := make(map[string]bool)
 
 			for _, v := range res.Vulns {
-				// 1. Conditional Go-side Validation (Restored behavior)
-				// Only validate if AQL flagged it as needed
-				if v.NeedsValidation {
-					if len(v.AllAffected) > 0 {
-						if !isVersionAffectedAny(v.AffectedVersion, v.AllAffected) {
-							continue
-						}
-					}
-				}
-
-				// 2. Local Deduplication for this release
+				// Local deduplication for this release
 				key := v.CveID + ":" + v.Package
 				if seen[key] {
 					continue
@@ -337,8 +273,8 @@ func ResolveEndpointDetails(db database.DBConnection, endpointName string) (map[
 					"package":          v.Package,
 					"affected_version": v.AffectedVersion,
 					"full_purl":        v.FullPurl,
-					"fixed_in":         util.ExtractApplicableFixedVersion(v.AffectedVersion, v.AllAffected),
-					"dependency_count": res.DependencyCount, // Store ref
+					"fixed_in":         util.ExtractApplicableFixedVersion(v.AffectedVersion, convertToModelsAffected(v.AllAffected)),
+					"dependency_count": res.DependencyCount,
 				})
 			}
 			releaseVulnMap[res.Name+":"+res.Version] = validVulns
@@ -459,6 +395,7 @@ func ResolveEndpointDetails(db database.DBConnection, endpointName string) (map[
 }
 
 // ResolveSyncedEndpoints fetches a list of endpoints that have been synced.
+// REFACTORED: Now uses release2cve materialized edges instead of complex AQL filtering
 func ResolveSyncedEndpoints(db database.DBConnection, limit int) ([]map[string]interface{}, error) {
 	ctx := context.Background()
 
@@ -594,13 +531,14 @@ func ResolveSyncedEndpoints(db database.DBConnection, limit int) ([]map[string]i
 
 	// ========================================================================
 	// STEP 3: Vulnerability Batch Query
-	// Fetch vulns using original robust AQL filtering
+	// REFACTORED: Use release2cve materialized edges (pre-validated at write-time)
 	// ========================================================================
 
 	// Map: "name:version" -> []VulnData
 	releaseVulnMap := make(map[string][]map[string]interface{})
 
 	if len(releasesToFetch) > 0 {
+		// REFACTORED: Simple edge traversal instead of complex filtering
 		vulnQuery := `
 			FOR target IN @targets
 				LET releaseDoc = (
@@ -612,75 +550,13 @@ func ResolveSyncedEndpoints(db database.DBConnection, limit int) ([]map[string]i
 				
 				FILTER releaseDoc != null
 				
-				LET sbomData = (
-					FOR s IN 1..1 OUTBOUND releaseDoc release2sbom
-						LIMIT 1
-						RETURN { id: s._id }
-				)[0]
-				
-				FILTER sbomData != null
-				
 				LET vulns = (
-					FOR sbomEdge IN sbom2purl
-						FILTER sbomEdge._from == sbomData.id
-						LET purl = DOCUMENT(sbomEdge._to)
-						FILTER purl != null
-						
-						FOR cveEdge IN cve2purl
-							FILTER cveEdge._to == purl._id
-							
-							// ORIGINAL ROBUST FILTER
-							FILTER (
-								sbomEdge.version_major != null AND 
-								cveEdge.introduced_major != null AND 
-								(cveEdge.fixed_major != null OR cveEdge.last_affected_major != null)
-							) ? (
-								(sbomEdge.version_major > cveEdge.introduced_major OR
-								(sbomEdge.version_major == cveEdge.introduced_major AND 
-								sbomEdge.version_minor > cveEdge.introduced_minor) OR
-								(sbomEdge.version_major == cveEdge.introduced_major AND 
-								sbomEdge.version_minor == cveEdge.introduced_minor AND 
-								sbomEdge.version_patch >= cveEdge.introduced_patch))
-								AND
-								(cveEdge.fixed_major != null ? (
-									sbomEdge.version_major < cveEdge.fixed_major OR
-									(sbomEdge.version_major == cveEdge.fixed_major AND 
-									sbomEdge.version_minor < cveEdge.fixed_minor) OR
-									(sbomEdge.version_major == cveEdge.fixed_major AND 
-									sbomEdge.version_minor == cveEdge.fixed_minor AND 
-									sbomEdge.version_patch < cveEdge.fixed_patch)
-								) : (
-									sbomEdge.version_major < cveEdge.last_affected_major OR
-									(sbomEdge.version_major == cveEdge.last_affected_major AND 
-									sbomEdge.version_minor < cveEdge.last_affected_minor) OR
-									(sbomEdge.version_major == cveEdge.last_affected_major AND 
-									sbomEdge.version_minor == cveEdge.last_affected_minor AND 
-									sbomEdge.version_patch <= cveEdge.last_affected_patch)
-								))
-							) : true
-							
-							LET cve = DOCUMENT(cveEdge._from)
-							FILTER cve != null
-							
-							LET matchedAffected = (
-								FOR affected IN cve.affected != null ? cve.affected : []
-									LET cveBasePurl = affected.package.purl != null ? 
-										affected.package.purl : 
-										CONCAT("pkg:", LOWER(affected.package.ecosystem), "/", affected.package.name)
-									FILTER cveBasePurl == purl.purl
-									RETURN affected
-							)
-							FILTER LENGTH(matchedAffected) > 0
-							
-							RETURN {
-								cve_id: cve.id,
-								severity_rating: cve.database_specific.severity_rating,
-								package: purl.purl,
-								affected_version: sbomEdge.version,
-								all_affected: matchedAffected,
-								// ORIGINAL LOGIC: Only validate in Go if AQL couldn't decide
-								needs_validation: sbomEdge.version_major == null OR cveEdge.introduced_major == null
-							}
+					FOR cve, edge IN 1..1 OUTBOUND releaseDoc release2cve
+						RETURN {
+							cve_id: cve.id,
+							severity_rating: cve.database_specific.severity_rating,
+							package: edge.package_purl
+						}
 				)
 				
 				RETURN {
@@ -701,11 +577,9 @@ func ResolveSyncedEndpoints(db database.DBConnection, limit int) ([]map[string]i
 		defer vCursor.Close()
 
 		type VulnRaw struct {
-			CveID           string            `json:"cve_id"`
-			SeverityRating  string            `json:"severity_rating"`
-			AffectedVersion string            `json:"affected_version"`
-			AllAffected     []models.Affected `json:"all_affected"`
-			NeedsValidation bool              `json:"needs_validation"`
+			CveID          string `json:"cve_id"`
+			SeverityRating string `json:"severity_rating"`
+			Package        string `json:"package"`
 		}
 
 		type ReleaseVulnResult struct {
@@ -721,22 +595,14 @@ func ResolveSyncedEndpoints(db database.DBConnection, limit int) ([]map[string]i
 				continue
 			}
 
-			// Go-side Validation & Optimization
+			// NO VALIDATION NEEDED - edges are pre-validated during ingestion
 			var validVulns []map[string]interface{}
 
 			for _, v := range res.Vulns {
-				// Validation
-				if v.NeedsValidation {
-					if len(v.AllAffected) > 0 {
-						if !isVersionAffectedAny(v.AffectedVersion, v.AllAffected) {
-							continue
-						}
-					}
-				}
-
 				validVulns = append(validVulns, map[string]interface{}{
 					"cve_id":          v.CveID,
 					"severity_rating": v.SeverityRating,
+					"package":         v.Package,
 				})
 			}
 			releaseVulnMap[res.Name+":"+res.Version] = validVulns
@@ -762,17 +628,22 @@ func ResolveSyncedEndpoints(db database.DBConnection, limit int) ([]map[string]i
 			currKey := svc.Name + ":" + svc.Current.Version
 			currVulns := releaseVulnMap[currKey]
 
-			// Deduplicate by CVE ID per service release (standard practice)
-			// Note: If you want endpoint-wide deduplication, you move this map outside
-			// but usually deltas are summed per service.
-			// Assuming simple sum for now as per original logic structure.
 			seen := make(map[string]bool)
 			for _, v := range currVulns {
 				cveID := v["cve_id"].(string)
-				if seen[cveID] {
+
+				// Ensure we handle package info for deduplication
+				pkg := ""
+				if p, ok := v["package"].(string); ok {
+					pkg = p
+				}
+				// Use composite key to count Instances (matching Details view)
+				dedupKey := cveID + ":" + pkg
+
+				if seen[dedupKey] {
 					continue
 				}
-				seen[cveID] = true
+				seen[dedupKey] = true
 
 				rating := v["severity_rating"].(string)
 				switch rating {
@@ -795,10 +666,17 @@ func ResolveSyncedEndpoints(db database.DBConnection, limit int) ([]map[string]i
 				seenPrev := make(map[string]bool)
 				for _, v := range prevVulns {
 					cveID := v["cve_id"].(string)
-					if seenPrev[cveID] {
+
+					pkg := ""
+					if p, ok := v["package"].(string); ok {
+						pkg = p
+					}
+					dedupKey := cveID + ":" + pkg
+
+					if seenPrev[dedupKey] {
 						continue
 					}
-					seenPrev[cveID] = true
+					seenPrev[dedupKey] = true
 
 					rating := v["severity_rating"].(string)
 					switch rating {
@@ -820,7 +698,7 @@ func ResolveSyncedEndpoints(db database.DBConnection, limit int) ([]map[string]i
 			})
 		}
 
-		// Construct stats (Option A: Counts only to match schema)
+		// Construct stats
 		totalVulnerabilities := map[string]interface{}{
 			"critical": currCounts["critical"],
 			"high":     currCounts["high"],
@@ -842,4 +720,21 @@ func ResolveSyncedEndpoints(db database.DBConnection, limit int) ([]map[string]i
 	}
 
 	return finalEndpoints, nil
+}
+
+// Helper function to convert generic map structure to models.Affected for util functions
+func convertToModelsAffected(allAffected []map[string]interface{}) []models.Affected {
+	var result []models.Affected
+	for _, affectedMap := range allAffected {
+		// Convert map to JSON bytes then to struct to ensure proper field mapping
+		bytes, err := json.Marshal(affectedMap)
+		if err != nil {
+			continue
+		}
+		var affected models.Affected
+		if err := json.Unmarshal(bytes, &affected); err == nil {
+			result = append(result, affected)
+		}
+	}
+	return result
 }

@@ -3,6 +3,7 @@ package releases
 
 import (
 	"context"
+	"encoding/json"
 	"net/url"
 
 	"github.com/arangodb/go-driver/v2/arangodb"
@@ -11,15 +12,7 @@ import (
 	"github.com/ortelius/pdvd-backend/v12/util"
 )
 
-func isVersionAffectedAny(version string, allAffected []models.Affected) bool {
-	for _, affected := range allAffected {
-		if util.IsVersionAffected(version, affected) {
-			return true
-		}
-	}
-	return false
-}
-
+// Helper functions for safe pointer access
 func getStringValue(s *string) string {
 	if s == nil {
 		return ""
@@ -34,7 +27,10 @@ func getFloatValue(f *float64) float64 {
 	return *f
 }
 
+// graphql/modules/releases/resolvers.go
+
 // ResolveReleaseVulnerabilities fetches vulnerabilities associated with a specific release.
+// Uses release2cve materialized edges - no validation needed
 func ResolveReleaseVulnerabilities(db database.DBConnection, name, version string) ([]map[string]interface{}, error) {
 	ctx := context.Background()
 
@@ -43,7 +39,7 @@ func ResolveReleaseVulnerabilities(db database.DBConnection, name, version strin
 		decodedName = name
 	}
 
-	// NEW SIMPLIFIED QUERY: Uses release2cve edge
+	// SIMPLIFIED QUERY: Uses release2cve edge (pre-validated)
 	query := `
 		FOR release IN release
 			FILTER release.name == @name AND release.version == @version
@@ -81,21 +77,22 @@ func ResolveReleaseVulnerabilities(db database.DBConnection, name, version strin
 	defer cursor.Close()
 
 	var vulnerabilities []map[string]interface{}
+	seen := make(map[string]bool)
 
 	type CVEResult struct {
-		CveID          string            `json:"cve_id"`
-		Summary        string            `json:"summary"`
-		Details        string            `json:"details"`
-		SeverityScore  float64           `json:"severity_score"`
-		SeverityRating string            `json:"severity_rating"`
-		Published      string            `json:"published"`
-		Modified       string            `json:"modified"`
-		Aliases        []string          `json:"aliases"`
-		Package        string            `json:"package"`
-		PackageVersion string            `json:"package_version"`
-		FullPurl       string            `json:"full_purl"`
-		AllAffected    []models.Affected `json:"all_affected"`
-		Severity       []models.Severity `json:"severity"`
+		CveID          string                   `json:"cve_id"`
+		Summary        string                   `json:"summary"`
+		Details        string                   `json:"details"`
+		SeverityScore  float64                  `json:"severity_score"`
+		SeverityRating string                   `json:"severity_rating"`
+		Published      string                   `json:"published"`
+		Modified       string                   `json:"modified"`
+		Aliases        []string                 `json:"aliases"`
+		Package        string                   `json:"package"`
+		PackageVersion string                   `json:"package_version"`
+		FullPurl       string                   `json:"full_purl"`
+		AllAffected    []map[string]interface{} `json:"all_affected"`
+		Severity       []map[string]interface{} `json:"severity"`
 	}
 
 	for cursor.HasMore() {
@@ -105,11 +102,22 @@ func ResolveReleaseVulnerabilities(db database.DBConnection, name, version strin
 			continue
 		}
 
+		// --- CHANGED START ---
+		// Use composite key (CVE ID + Package) to allow multiple instances of the same CVE
+		key := result.CveID + ":" + result.Package
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		// --- CHANGED END ---
+
 		var cvssScore string
 		for _, sev := range result.Severity {
-			if sev.Type == "CVSS_V3" {
-				cvssScore = sev.Score
-				break
+			if sevType, ok := sev["type"].(string); ok && sevType == "CVSS_V3" {
+				if score, ok := sev["score"].(string); ok {
+					cvssScore = score
+					break
+				}
 			}
 		}
 
@@ -126,7 +134,7 @@ func ResolveReleaseVulnerabilities(db database.DBConnection, name, version strin
 			"package":          result.Package,
 			"affected_version": result.PackageVersion,
 			"full_purl":        result.FullPurl,
-			"fixed_in":         util.ExtractApplicableFixedVersion(result.PackageVersion, result.AllAffected),
+			"fixed_in":         util.ExtractApplicableFixedVersion(result.PackageVersion, convertToModelsAffected(result.AllAffected)),
 		})
 	}
 
@@ -198,6 +206,7 @@ func ResolveAffectedEndpoints(db database.DBConnection, name, version string) ([
 }
 
 // ResolveAffectedReleases fetches releases affected by vulnerabilities of a specific severity.
+// Uses release2cve materialized edges - no validation needed
 func ResolveAffectedReleases(db database.DBConnection, severity string) ([]interface{}, error) {
 	ctx := context.Background()
 	severityScore := util.GetSeverityScore(severity)
@@ -244,6 +253,7 @@ func ResolveAffectedReleases(db database.DBConnection, severity string) ([]inter
 					RETURN count
 			)[0]
 
+			// Use release2cve materialized edges (pre-validated)
 			LET cveMatches = (
 				FOR cve, edge IN 1..1 OUTBOUND latestRelease release2cve
                     FILTER @severityScore == 0.0 OR cve.database_specific.cvss_base_score >= @severityScore
@@ -259,6 +269,7 @@ func ResolveAffectedReleases(db database.DBConnection, severity string) ([]inter
                         cve_aliases: cve.aliases,
                         all_affected: cve.affected, 
                         
+                        // Retrieved directly from materialized edge
                         package: edge.package_purl,
                         version: edge.package_version,
                         full_purl: edge.package_purl
@@ -353,18 +364,18 @@ func ResolveAffectedReleases(db database.DBConnection, severity string) ([]inter
 		VulnerabilityCount      int      `json:"vulnerability_count"`
 		VulnerabilityCountDelta *int     `json:"vulnerability_count_delta"`
 		CveMatches              []struct {
-			CveID             *string           `json:"cve_id"`
-			CveSummary        *string           `json:"cve_summary"`
-			CveDetails        *string           `json:"cve_details"`
-			CveSeverityScore  *float64          `json:"cve_severity_score"`
-			CveSeverityRating *string           `json:"cve_severity_rating"`
-			CvePublished      *string           `json:"cve_published"`
-			CveModified       *string           `json:"cve_modified"`
-			CveAliases        []string          `json:"cve_aliases"`
-			AllAffected       []models.Affected `json:"all_affected"`
-			Package           string            `json:"package"`
-			Version           string            `json:"version"`
-			FullPurl          string            `json:"full_purl"`
+			CveID             *string                  `json:"cve_id"`
+			CveSummary        *string                  `json:"cve_summary"`
+			CveDetails        *string                  `json:"cve_details"`
+			CveSeverityScore  *float64                 `json:"cve_severity_score"`
+			CveSeverityRating *string                  `json:"cve_severity_rating"`
+			CvePublished      *string                  `json:"cve_published"`
+			CveModified       *string                  `json:"cve_modified"`
+			CveAliases        []string                 `json:"cve_aliases"`
+			AllAffected       []map[string]interface{} `json:"all_affected"`
+			Package           string                   `json:"package"`
+			Version           string                   `json:"version"`
+			FullPurl          string                   `json:"full_purl"`
 		} `json:"cve_matches"`
 	}
 
@@ -415,7 +426,7 @@ func ResolveAffectedReleases(db database.DBConnection, severity string) ([]inter
 				}
 
 				if len(cveMatch.AllAffected) > 0 {
-					result["fixed_in"] = util.ExtractApplicableFixedVersion(cveMatch.Version, cveMatch.AllAffected)
+					result["fixed_in"] = util.ExtractApplicableFixedVersion(cveMatch.Version, convertToModelsAffected(cveMatch.AllAffected))
 				}
 
 				results = append(results, result)
@@ -456,4 +467,21 @@ func ResolveAffectedReleases(db database.DBConnection, severity string) ([]inter
 	}
 
 	return results, nil
+}
+
+// Helper function to convert generic map structure to models.Affected for util functions
+func convertToModelsAffected(allAffected []map[string]interface{}) []models.Affected {
+	var result []models.Affected
+	for _, affectedMap := range allAffected {
+		// Convert map to JSON bytes then to struct to ensure proper field mapping
+		bytes, err := json.Marshal(affectedMap)
+		if err != nil {
+			continue
+		}
+		var affected models.Affected
+		if err := json.Unmarshal(bytes, &affected); err == nil {
+			result = append(result, affected)
+		}
+	}
+	return result
 }

@@ -14,6 +14,8 @@ type SyncWithEndpoint struct {
 	EndpointName string        `json:"endpoint_name"`
 	Releases     []ReleaseSync `json:"releases"`
 	Endpoint     Endpoint      `json:"endpoint"`
+	// ADDED: Field to allow clients to specify backdated sync times
+	SyncedAt time.Time `json:"synced_at,omitempty"`
 }
 
 // ReleaseSync represents a release with optional SBOM in the sync request
