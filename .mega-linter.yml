@@ -1,3 +1,4 @@
+---
 APPLY_FIXES: all
 SHOW_ELAPSED_TIME: true
 FILEIO_REPORTER: false
