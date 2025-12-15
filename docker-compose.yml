@@ -1,6 +1,6 @@
 services:
   arangodb:
-    image: arangodb:3.12@sha256:76624eca04b8f59d7705273a2785f713a92390fee754af22566fae9d6bb8093f
+    image: arangodb:3.12@sha256:ff84c4f0dd55f96a4aeea467c89613bd93d9f2dc848fb3323bf4801bd178fc25
     container_name: arangodb
     environment:
       ARANGO_ROOT_PASSWORD: mypassword
