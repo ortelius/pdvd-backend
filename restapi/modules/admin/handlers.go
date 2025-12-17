@@ -1,4 +1,5 @@
 // Package admin implements the REST API handlers for admin operations.
+// It provides endpoints for MTTR backfill processing and status monitoring.
 package admin
 
 import (
@@ -69,10 +70,10 @@ func runBackfill(db database.DBConnection, daysBack int) {
 
 	log.Printf("Starting CVE lifecycle backfill for last %d days...", daysBack)
 
-	// FIXED: Parse synced_at as DATE_ISO8601 and pass cutoffDate as string
+	// FIXED: Parse synced_at as DATE_TIMESTAMP and pass cutoffDate as milliseconds
 	syncQuery := `
 		FOR sync IN sync
-			LET syncedAt = DATE_ISO8601(sync.synced_at)
+			LET syncedAt = DATE_TIMESTAMP(sync.synced_at)
 			FILTER syncedAt >= @cutoffDate
 			SORT syncedAt ASC
 			RETURN {
@@ -92,7 +93,7 @@ func runBackfill(db database.DBConnection, daysBack int) {
 
 	cursor, err := db.Database.Query(ctx, syncQuery, &arangodb.QueryOptions{
 		BindVars: map[string]interface{}{
-			"cutoffDate": cutoffDate.Format(time.RFC3339), // FIXED: Pass as string
+			"cutoffDate": cutoffDate.Unix() * 1000, // FIXED: Pass as millisecond timestamp
 		},
 	})
 	if err != nil {

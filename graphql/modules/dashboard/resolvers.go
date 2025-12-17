@@ -1,4 +1,6 @@
 // Package dashboard implements the resolvers for dashboard metrics.
+// It provides GraphQL resolvers for vulnerability trend analysis, MTTR calculations,
+// and dashboard overview statistics.
 package dashboard
 
 import (
@@ -47,11 +49,11 @@ func ResolveVulnerabilityTrend(db database.DBConnection, days int) ([]map[string
 	now := time.Now().UTC()
 	startDate := now.AddDate(0, 0, -days).Truncate(24 * time.Hour)
 
-	// FIXED: Parse string dates with DATE_ISO8601 and pass bind vars as strings
+	// FIXED: Parse RFC3339 strings to timestamps for proper comparison
 	query := `
 		FOR r IN cve_lifecycle
-			LET introduced = DATE_ISO8601(r.introduced_at)
-			LET remediated = r.remediated_at != null ? DATE_ISO8601(r.remediated_at) : null
+			LET introduced = DATE_TIMESTAMP(r.introduced_at)
+			LET remediated = r.remediated_at != null ? DATE_TIMESTAMP(r.remediated_at) : null
 			
 			FILTER introduced <= @now
 			FILTER r.is_remediated == false OR remediated >= @startDate
@@ -65,8 +67,8 @@ func ResolveVulnerabilityTrend(db database.DBConnection, days int) ([]map[string
 
 	cursor, err := db.Database.Query(ctx, query, &arangodb.QueryOptions{
 		BindVars: map[string]interface{}{
-			"now":       now.Format(time.RFC3339),       // FIXED: Pass as string
-			"startDate": startDate.Format(time.RFC3339), // FIXED: Pass as string
+			"now":       now.Unix() * 1000,       // FIXED: Pass as millisecond timestamp
+			"startDate": startDate.Unix() * 1000, // FIXED: Pass as millisecond timestamp
 		},
 	})
 	if err != nil {
@@ -139,8 +141,9 @@ func ResolveDashboardGlobalStatus(_ database.DBConnection, _ int) (map[string]in
 	}, nil
 }
 
-// ResolveMTTR calculates comprehensive metrics defined in the Dashboard Layout
-// FIXED: Properly handles date comparisons with RFC3339 strings
+// ResolveMTTR calculates comprehensive metrics defined in the Dashboard Layout.
+// It provides MTTR analysis, SLA compliance, and endpoint impact metrics.
+// FIXED: Properly handles date comparisons with RFC3339 strings.
 func ResolveMTTR(db database.DBConnection, days int) (map[string]interface{}, error) {
 	ctx := context.Background()
 	if days <= 0 {
@@ -148,7 +151,7 @@ func ResolveMTTR(db database.DBConnection, days int) (map[string]interface{}, er
 	}
 	cutoffDate := time.Now().AddDate(0, 0, -days)
 
-	// FIXED: Parse dates in AQL and pass cutoffDate as string
+	// FIXED: Parse dates as timestamps and pass cutoffDate as milliseconds
 	query := `
 		LET sla_def = { 
 			"CRITICAL": { "default": 15, "high_risk": 7 }, 
@@ -169,10 +172,8 @@ func ResolveMTTR(db database.DBConnection, days int) (map[string]interface{}, er
 
 		LET events = (
 			FOR r IN cve_lifecycle
-				// FIXED: Parse string dates for comparison
-				LET introduced = DATE_ISO8601(r.introduced_at)
-				LET remediated = r.remediated_at != null ? DATE_ISO8601(r.remediated_at) : null
-				LET published = r.published != null ? DATE_ISO8601(r.published) : null
+				LET introduced = DATE_TIMESTAMP(r.introduced_at)
+				LET remediated = r.remediated_at != null ? DATE_TIMESTAMP(r.remediated_at) : null
 				
 				LET ep_type = HAS(ep_map, r.endpoint_name) ? ep_map[r.endpoint_name] : "unknown"
 				LET is_high_risk = (ep_type == "mission_asset")
@@ -300,7 +301,7 @@ func ResolveMTTR(db database.DBConnection, days int) (map[string]interface{}, er
 
 	cursor, err := db.Database.Query(ctx, query, &arangodb.QueryOptions{
 		BindVars: map[string]interface{}{
-			"cutoffDate": cutoffDate.Format(time.RFC3339), // FIXED: Pass as string
+			"cutoffDate": cutoffDate.Unix() * 1000, // FIXED: Pass as millisecond timestamp
 		},
 	})
 	if err != nil {
