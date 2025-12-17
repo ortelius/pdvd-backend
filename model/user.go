@@ -1,3 +1,4 @@
+// Package model - User defines the struct for user profie
 package model
 
 import "time"

@@ -185,7 +185,9 @@ func BootstrapAdmin(db database.DBConnection) {
 	})
 
 	if err != nil {
-		log.Fatalf("Failed to upsert bootstrap admin: %v", err)
+		cursor.Close()
+		log.Printf("Failed to upsert bootstrap admin: %v", err)
+		return
 	}
 
 	// 4. LOG TO STDOUT (This goes to K8s logs)
