@@ -1,3 +1,4 @@
+// Package auth provides authentication and authorization types for the REST API.
 package auth
 
 import (
@@ -105,7 +106,7 @@ func Me(c *fiber.Ctx) error {
 }
 
 // ForgotPassword is a placeholder for the invite/reset logic
-func ForgotPassword(db database.DBConnection) fiber.Handler {
+func ForgotPassword(_ database.DBConnection) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var req ForgotPasswordRequest
 		if err := c.BodyParser(&req); err != nil {
@@ -157,7 +158,9 @@ func BootstrapAdmin(db database.DBConnection) {
 	// 2. Generate secure token
 	token, err := GenerateRandomString(32)
 	if err != nil {
-		log.Fatalf("Failed to generate bootstrap token: %v", err)
+		cursor.Close()
+		log.Printf("Failed to generate bootstrap token: %v", err)
+		return
 	}
 
 	// 3. Upsert the bootstrap user (Create if missing, Update password if exists)

@@ -1,3 +1,4 @@
+// Package auth provides authentication and authorization types for the REST API.
 package auth
 
 import (

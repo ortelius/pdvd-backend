@@ -347,6 +347,8 @@ func FindReleaseByCompositeKey(ctx context.Context, db arangodb.Database, name, 
 	return "", nil
 }
 
+// FindSBOMByContentHash retrieves an SBOM document from the database by its content hash.
+// Returns the SBOM if found, or nil if no matching hash exists.
 func FindSBOMByContentHash(ctx context.Context, db arangodb.Database, contentHash string) (string, error) {
 	query := `
 		FOR s IN sbom
