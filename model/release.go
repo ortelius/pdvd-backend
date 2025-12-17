@@ -55,12 +55,12 @@ type ProjectRelease struct {
 	ScorecardResult          *ScorecardAPIResponse `json:"scorecard_result,omitempty"`
 	VulnerabilityCount       int                   `json:"vulnerability_count,omitempty"`
 	PrevVersionVulnCount     int                   `json:"prev_version_vuln_count,omitempty"`
-	
+
 	// Parsed name components
-	Org       string   `json:"org,omitempty"`        // Organization name parsed from name field
-	Path      []string `json:"path,omitempty"`       // Path components parsed from name field
-	Shortname string   `json:"shortname,omitempty"`  // Short name parsed from name field
-	IsPublic  bool     `json:"is_public"`            // Whether the release is public (default: true)
+	Org       string   `json:"org,omitempty"`       // Organization name parsed from name field
+	Path      []string `json:"path,omitempty"`      // Path components parsed from name field
+	Shortname string   `json:"shortname,omitempty"` // Short name parsed from name field
+	IsPublic  bool     `json:"is_public"`           // Whether the release is public (default: true)
 }
 
 // ScorecardAPIResponse represents the JSON response from the OpenSSF Scorecard API.
@@ -113,7 +113,7 @@ func NewProjectRelease() *ProjectRelease {
 // ParseAndSetNameComponents parses the Name field and populates org, path, shortname, and is_public
 func (r *ProjectRelease) ParseAndSetNameComponents() {
 	parts := strings.Split(r.Name, "/")
-	
+
 	if len(parts) > 1 {
 		r.Org = parts[0]
 		r.Shortname = parts[1]
@@ -121,7 +121,7 @@ func (r *ProjectRelease) ParseAndSetNameComponents() {
 		r.Org = "library"
 		r.Shortname = r.Name
 	}
-	
+
 	r.Path = []string{}
 	r.IsPublic = true
 }
