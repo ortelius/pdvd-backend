@@ -207,7 +207,6 @@ func ResolveAffectedEndpoints(db database.DBConnection, name, version string) ([
 
 // ResolveAffectedReleases fetches releases affected by vulnerabilities of a specific severity.
 // Uses release2cve materialized edges - no validation needed
-// FIXED: Returns both latest version AND synced versions (no duplicates)
 func ResolveAffectedReleases(db database.DBConnection, severity string) ([]interface{}, error) {
 	ctx := context.Background()
 	severityScore := util.GetSeverityScore(severity)
@@ -216,7 +215,6 @@ func ResolveAffectedReleases(db database.DBConnection, severity string) ([]inter
 		FOR r IN release
 			COLLECT name = r.name INTO groupedReleases = r
 
-			// Get the latest version for this release name
 			LET latestRelease = (
 				FOR release IN groupedReleases
 					SORT release.version_major != null ? release.version_major : -1 DESC,
@@ -229,140 +227,115 @@ func ResolveAffectedReleases(db database.DBConnection, severity string) ([]inter
 					RETURN release
 			)[0]
 			
-			// Get all versions that are synced to endpoints (deployed)
-			LET syncedVersions = (
-				FOR release IN groupedReleases
-					LET hasSyncs = (
-						FOR sync IN sync
-							FILTER sync.release_name == release.name 
-							   AND sync.release_version == release.version
-							LIMIT 1
-							RETURN 1
-					)
-					FILTER LENGTH(hasSyncs) > 0
-					RETURN release
-			)
-			
-			// Combine latest + synced, remove duplicates by version
-			LET uniqueReleases = (
-				FOR rel IN APPEND([latestRelease], syncedVersions)
-					COLLECT version = rel.version INTO grouped = rel
-					RETURN FIRST(grouped)
-			)
-			
 			LET versionCount = LENGTH(groupedReleases)
+
+			LET sbomData = (
+				FOR s IN 1..1 OUTBOUND latestRelease release2sbom
+					LIMIT 1
+					RETURN { 
+						id: s._id
+					}
+			)[0]
+
+			LET dependencyCount = (
+				FILTER sbomData != null
+				FOR edge IN sbom2purl
+					FILTER edge._from == sbomData.id
+					COLLECT fullPurl = edge.full_purl
+					RETURN 1
+			)
+
+			LET syncCount = (
+				FOR sync IN sync
+					FILTER sync.release_name == latestRelease.name 
+					AND sync.release_version == latestRelease.version
+					COLLECT WITH COUNT INTO count
+					RETURN count
+			)[0]
+
+			// Use release2cve materialized edges (pre-validated)
+			LET cveMatches = (
+				FOR cve, edge IN 1..1 OUTBOUND latestRelease release2cve
+                    FILTER @severityScore == 0.0 OR cve.database_specific.cvss_base_score >= @severityScore
+                    
+                    RETURN {
+                        cve_id: cve.id,
+                        cve_summary: cve.summary,
+                        cve_details: cve.details,
+                        cve_severity_score: cve.database_specific.cvss_base_score,
+                        cve_severity_rating: cve.database_specific.severity_rating,
+                        cve_published: cve.published,
+                        cve_modified: cve.modified,
+                        cve_aliases: cve.aliases,
+                        all_affected: cve.affected, 
+                        
+                        // Retrieved directly from materialized edge
+                        package: edge.package_purl,
+                        version: edge.package_version,
+                        full_purl: edge.package_purl
+                    }
+			)
+
+			FILTER @severityScore == 0.0 OR LENGTH(cveMatches) > 0
 			
-			// Process each unique release version
-			FOR targetRelease IN uniqueReleases
-				FILTER targetRelease != null
-
-				LET sbomData = (
-					FOR s IN 1..1 OUTBOUND targetRelease release2sbom
-						LIMIT 1
-						RETURN { 
-							id: s._id
-						}
-				)[0]
-
-				LET dependencyCount = (
-					FILTER sbomData != null
-					FOR edge IN sbom2purl
-						FILTER edge._from == sbomData.id
-						COLLECT fullPurl = edge.full_purl
-						RETURN 1
+			LET maxSeverity = LENGTH(cveMatches) > 0 ? MAX(cveMatches[*].cve_severity_score) : 0
+			
+			LET uniqueCves = (
+				FOR match IN cveMatches
+					COLLECT cveId = match.cve_id
+					RETURN 1
+			)
+			LET vulnerabilityCount = LENGTH(uniqueCves)
+			
+			LET previousRelease = (
+				FOR release IN groupedReleases
+					FILTER release._key != latestRelease._key
+					SORT release.version_major != null ? release.version_major : -1 DESC,
+						release.version_minor != null ? release.version_minor : -1 DESC,
+						release.version_patch != null ? release.version_patch : -1 DESC,
+						release.version_prerelease != null && release.version_prerelease != "" ? 1 : 0 ASC,
+						release.version_prerelease ASC,
+						release.version DESC
+					LIMIT 1
+					RETURN release
+			)[0]
+			
+			LET prevVulnCount = previousRelease != null ? (
+				LET prevCveMatches = (
+					FOR cve, edge IN 1..1 OUTBOUND previousRelease release2cve
+						RETURN { cve_id: cve.id }
 				)
-
-				LET syncCount = (
-					FOR sync IN sync
-						FILTER sync.release_name == targetRelease.name 
-						AND sync.release_version == targetRelease.version
-						COLLECT WITH COUNT INTO count
-						RETURN count
-				)[0]
-
-				// Use release2cve materialized edges (pre-validated)
-				LET cveMatches = (
-					FOR cve, edge IN 1..1 OUTBOUND targetRelease release2cve
-	                    FILTER @severityScore == 0.0 OR cve.database_specific.cvss_base_score >= @severityScore
-	                    
-	                    RETURN {
-	                        cve_id: cve.id,
-	                        cve_summary: cve.summary,
-	                        cve_details: cve.details,
-	                        cve_severity_score: cve.database_specific.cvss_base_score,
-	                        cve_severity_rating: cve.database_specific.severity_rating,
-	                        cve_published: cve.published,
-	                        cve_modified: cve.modified,
-	                        cve_aliases: cve.aliases,
-	                        all_affected: cve.affected, 
-	                        
-	                        // Retrieved directly from materialized edge
-	                        package: edge.package_purl,
-	                        version: edge.package_version,
-	                        full_purl: edge.package_purl
-	                    }
-				)
-
-				FILTER @severityScore == 0.0 OR LENGTH(cveMatches) > 0
 				
-				LET maxSeverity = LENGTH(cveMatches) > 0 ? MAX(cveMatches[*].cve_severity_score) : 0
-				
-				LET uniqueCves = (
-					FOR match IN cveMatches
+				LET prevUniqueCves = (
+					FOR match IN prevCveMatches
 						COLLECT cveId = match.cve_id
 						RETURN 1
 				)
-				LET vulnerabilityCount = LENGTH(uniqueCves)
 				
-				LET previousRelease = (
-					FOR release IN groupedReleases
-						FILTER release._key != targetRelease._key
-						SORT release.version_major != null ? release.version_major : -1 DESC,
-							release.version_minor != null ? release.version_minor : -1 DESC,
-							release.version_patch != null ? release.version_patch : -1 DESC,
-							release.version_prerelease != null && release.version_prerelease != "" ? 1 : 0 ASC,
-							release.version_prerelease ASC,
-							release.version DESC
-						LIMIT 1
-						RETURN release
-				)[0]
-				
-				LET prevVulnCount = previousRelease != null ? (
-					LET prevCveMatches = (
-						FOR cve, edge IN 1..1 OUTBOUND previousRelease release2cve
-							RETURN { cve_id: cve.id }
-					)
-					
-					LET prevUniqueCves = (
-						FOR match IN prevCveMatches
-							COLLECT cveId = match.cve_id
-							RETURN 1
-					)
-					
-					RETURN LENGTH(prevUniqueCves)
-				)[0] : null
-				
-				LET vulnerabilityCountDelta = prevVulnCount != null ? (vulnerabilityCount - prevVulnCount) : null
+				RETURN LENGTH(prevUniqueCves)
+			)[0] : null
+			
+			LET vulnerabilityCountDelta = prevVulnCount != null ? (vulnerabilityCount - prevVulnCount) : null
 
-				RETURN {
-					release_name: targetRelease.name,
-					latest_version: targetRelease.version,
-					version_major: targetRelease.version_major,
-					version_minor: targetRelease.version_minor,
-					version_patch: targetRelease.version_patch,
-					version_prerelease: targetRelease.version_prerelease,
-					version_count: versionCount,
-					content_sha: targetRelease.contentsha,
-					project_type: targetRelease.projecttype,
-					openssf_scorecard_score: targetRelease.openssf_scorecard_score,
-					synced_endpoint_count: syncCount,
-					dependency_count: LENGTH(dependencyCount),
-					max_severity: maxSeverity,
-					vulnerability_count: vulnerabilityCount,
-					vulnerability_count_delta: vulnerabilityCountDelta,
-					cve_matches: cveMatches
-				}
-	`
+			RETURN {
+				release_name: latestRelease.name,
+				latest_version: latestRelease.version,
+				version_major: latestRelease.version_major,
+				version_minor: latestRelease.version_minor,
+				version_patch: latestRelease.version_patch,
+				version_prerelease: latestRelease.version_prerelease,
+				version_count: versionCount,
+				content_sha: latestRelease.contentsha,
+				project_type: latestRelease.projecttype,
+				openssf_scorecard_score: latestRelease.openssf_scorecard_score,
+				synced_endpoint_count: syncCount,
+				dependency_count: LENGTH(dependencyCount),
+				max_severity: maxSeverity,
+				vulnerability_count: vulnerabilityCount,
+				vulnerability_count_delta: vulnerabilityCountDelta,
+				cve_matches: cveMatches
+			}
+			`
 
 	cursor, err := db.Database.Query(ctx, query, &arangodb.QueryOptions{
 		BindVars: map[string]interface{}{

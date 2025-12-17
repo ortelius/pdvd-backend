@@ -9,11 +9,13 @@ require (
 	github.com/arangodb/go-driver/v2 v2.1.6
 	github.com/cenkalti/backoff v2.2.1+incompatible
 	github.com/gofiber/fiber/v2 v2.52.10
+	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/google/osv-scanner v1.9.2
 	github.com/graphql-go/graphql v0.8.1
 	github.com/package-url/packageurl-go v0.1.3
 	github.com/pandatix/go-cvss v0.6.2
 	go.uber.org/zap v1.27.1
+	golang.org/x/crypto v0.46.0
 	gopkg.in/yaml.v2 v2.4.0
 )
 
