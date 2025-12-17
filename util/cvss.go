@@ -1,4 +1,6 @@
 // Package util provides utility functions for the backend.
+//
+//revive:disable-next-line:var-naming
 package util
 
 import (

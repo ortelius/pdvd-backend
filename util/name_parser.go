@@ -1,4 +1,6 @@
 // Package util provides utility functions for the backend.
+//
+//revive:disable-next-line:var-naming
 package util
 
 import "strings"
@@ -25,7 +27,7 @@ func ParseName(name string) NameComponents {
 	}
 
 	parts := strings.Split(name, "/")
-	
+
 	if len(parts) > 1 {
 		// Has org prefix
 		return NameComponents{
@@ -35,7 +37,7 @@ func ParseName(name string) NameComponents {
 			IsPublic:  true,
 		}
 	}
-	
+
 	// No org prefix, use "library" as default
 	return NameComponents{
 		Org:       "library",
