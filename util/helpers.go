@@ -41,8 +41,12 @@ func ParseSemanticVersion(version string) *ParsedVersion {
 		return &ParsedVersion{Major: &zero, Minor: &zero, Patch: &zero}
 	}
 
+	// FIX: Strip "go" prefix for Go stdlib versions (e.g., "go1.22.2")
+	// This must be done before semver parsing since Masterminds/semver doesn't handle it
+	cleanVersion := strings.TrimPrefix(version, "go")
+
 	// Try semver parsing first
-	v, err := semver.NewVersion(version)
+	v, err := semver.NewVersion(cleanVersion)
 	if err == nil {
 		major := int(v.Major())
 		minor := int(v.Minor())
@@ -56,7 +60,7 @@ func ParseSemanticVersion(version string) *ParsedVersion {
 	}
 
 	// Fallback: try to parse manually for versions like "1.2" or "2"
-	parts := strings.Split(version, ".")
+	parts := strings.Split(cleanVersion, ".")
 	result := &ParsedVersion{}
 
 	if len(parts) >= 1 {
