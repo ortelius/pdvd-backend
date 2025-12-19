@@ -144,6 +144,10 @@ func ResolveDashboardGlobalStatus(_ database.DBConnection, _ int) (map[string]in
 // ResolveMTTR calculates comprehensive metrics defined in the Dashboard Layout.
 // It provides MTTR analysis, SLA compliance, and endpoint impact metrics.
 // FIXED: Properly handles date comparisons with RFC3339 strings.
+// ResolveMTTR calculates comprehensive metrics defined in the Dashboard Layout.
+// It provides MTTR analysis, SLA compliance, and endpoint impact metrics.
+// FIXED: Properly handles date comparisons with RFC3339 strings.
+// FIXED: Corrected aggregation field for post_deployment_cves to match sub-query output.
 func ResolveMTTR(db database.DBConnection, days int) (map[string]interface{}, error) {
 	ctx := context.Background()
 	if days <= 0 {
@@ -267,7 +271,7 @@ func ResolveMTTR(db database.DBConnection, days int) (map[string]interface{}, er
 		LET exec_summary = {
 			total_new_cves: SUM(severity_groups[*].new_detected),
 			total_fixed_cves: total_fixed,
-			post_deployment_cves: SUM(severity_groups[*].open_post_in_window_count),
+			post_deployment_cves: SUM(severity_groups[*].open_post_count), // FIXED: Now uses correct field name
 			
 			mttr_all: LENGTH(severity_groups) > 0 ? AVG(severity_groups[*].mttr) : 0,
 			mttr_post_deployment: LENGTH(severity_groups) > 0 ? AVG(severity_groups[*].mttr_post_deployment) : 0,
