@@ -256,6 +256,7 @@ func linkReleaseToExistingCVEs(ctx context.Context, db database.DBConnection, re
 						FILTER (
 							sbomEdge.version_major != null AND 
 							cveEdge.introduced_major != null AND 
+							cveEdge.introduced_major > 0 AND 
 							(cveEdge.fixed_major != null OR cveEdge.last_affected_major != null)
 						) ? (
 							(sbomEdge.version_major > cveEdge.introduced_major OR

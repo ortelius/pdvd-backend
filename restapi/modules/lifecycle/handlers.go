@@ -47,7 +47,7 @@ func CreateOrUpdateLifecycleRecord(
 	introducedAt time.Time,
 	disclosedAfter bool,
 ) error {
-	
+
 	// Step 1: Check if record already exists for this EXACT combination
 	// This prevents duplicates when the same version is re-synced
 	checkQuery := `
@@ -60,7 +60,7 @@ func CreateOrUpdateLifecycleRecord(
 			LIMIT 1
 			RETURN rec
 	`
-	
+
 	cursor, err := db.Database.Query(ctx, checkQuery, &arangodb.QueryOptions{
 		BindVars: map[string]interface{}{
 			"cve_id":        cveInfo.CVEID,
@@ -70,12 +70,12 @@ func CreateOrUpdateLifecycleRecord(
 			"version":       releaseVersion,
 		},
 	})
-	
+
 	if err != nil {
 		return fmt.Errorf("failed to check existing lifecycle record: %w", err)
 	}
 	defer cursor.Close()
-	
+
 	// If record exists for this version, just update timestamp
 	if cursor.HasMore() {
 		var existing map[string]interface{}
@@ -83,7 +83,7 @@ func CreateOrUpdateLifecycleRecord(
 		if err != nil {
 			return fmt.Errorf("failed to read existing record: %w", err)
 		}
-		
+
 		// Update: Touch timestamp and maintain "once post-deploy, always post-deploy" logic
 		updateQuery := `
 			UPDATE @key WITH {
@@ -91,20 +91,23 @@ func CreateOrUpdateLifecycleRecord(
 				disclosed_after_deployment: OLD.disclosed_after_deployment || @disclosed_after
 			} IN cve_lifecycle
 		`
-		
+
 		_, err = db.Database.Query(ctx, updateQuery, &arangodb.QueryOptions{
 			BindVars: map[string]interface{}{
 				"key":             existing["_key"],
 				"disclosed_after": disclosedAfter,
 			},
 		})
-		
+
 		return err
 	}
-	
+
 	// Step 2: Record doesn't exist - create new one
 	// CRITICAL: Use introducedAt (actual deployment time), not time.Now()
 	// CRITICAL: Use releaseVersion from parameter, not cached value
+	// CRITICAL: Calculate disclosedAfter using introducedAt vs published time
+	isDisclosedAfter := !cveInfo.Published.IsZero() && cveInfo.Published.After(introducedAt)
+
 	record := map[string]interface{}{
 		"cve_id":                     cveInfo.CVEID,
 		"endpoint_name":              endpointName,
@@ -112,24 +115,24 @@ func CreateOrUpdateLifecycleRecord(
 		"package":                    cveInfo.Package,
 		"severity_rating":            cveInfo.SeverityRating,
 		"severity_score":             cveInfo.SeverityScore,
-		"introduced_at":              introducedAt,  // ✅ Actual sync/deployment time
-		"introduced_version":         releaseVersion,  // ✅ Specific version
+		"introduced_at":              introducedAt,   // ✅ Actual sync/deployment time
+		"introduced_version":         releaseVersion, // ✅ Specific version
 		"remediated_at":              nil,
 		"remediated_version":         nil,
 		"days_to_remediate":          nil,
 		"is_remediated":              false,
-		"disclosed_after_deployment": disclosedAfter,
+		"disclosed_after_deployment": isDisclosedAfter, // ✅ Calculate from introducedAt, not now
 		"published":                  cveInfo.Published,
 		"objtype":                    "CVELifecycleEvent",
 		"created_at":                 time.Now().UTC(),
 		"updated_at":                 time.Now().UTC(),
 	}
-	
+
 	_, err = db.Collections["cve_lifecycle"].CreateDocument(ctx, record)
 	if err != nil {
 		return fmt.Errorf("failed to create lifecycle record: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -150,7 +153,7 @@ func MarkCVERemediated(
 	packagePURL string,
 	remediatedAt time.Time,
 ) error {
-	
+
 	// Find the lifecycle record for the previous version
 	query := `
 		FOR r IN cve_lifecycle
@@ -178,7 +181,7 @@ func MarkCVERemediated(
 			
 			RETURN NEW
 	`
-	
+
 	_, err := db.Database.Query(ctx, query, &arangodb.QueryOptions{
 		BindVars: map[string]interface{}{
 			"cve_id":           cveID,
@@ -191,11 +194,11 @@ func MarkCVERemediated(
 			"remediated_at_ts": remediatedAt.Unix() * 1000,
 		},
 	})
-	
+
 	if err != nil {
 		return fmt.Errorf("failed to mark CVE as remediated: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -208,10 +211,10 @@ func CompareAndMarkRemediations(
 	releaseName string,
 	previousVersion string,
 	currentVersion string,
-	currentCVEs map[string]CVEInfo,  // Key format: "cve_id:package"
+	currentCVEs map[string]CVEInfo, // Key format: "cve_id:package"
 	remediatedAt time.Time,
 ) (int, error) {
-	
+
 	// Get all CVEs from the previous version that are still open
 	query := `
 		FOR r IN cve_lifecycle
@@ -225,7 +228,7 @@ func CompareAndMarkRemediations(
 				key: CONCAT(r.cve_id, ":", r.package)
 			}
 	`
-	
+
 	cursor, err := db.Database.Query(ctx, query, &arangodb.QueryOptions{
 		BindVars: map[string]interface{}{
 			"release_name":     releaseName,
@@ -233,18 +236,18 @@ func CompareAndMarkRemediations(
 			"previous_version": previousVersion,
 		},
 	})
-	
+
 	if err != nil {
 		return 0, fmt.Errorf("failed to query previous version CVEs: %w", err)
 	}
 	defer cursor.Close()
-	
+
 	type PreviousCVE struct {
 		CVEID   string `json:"cve_id"`
 		Package string `json:"package"`
 		Key     string `json:"key"`
 	}
-	
+
 	var previousCVEs []PreviousCVE
 	for cursor.HasMore() {
 		var cve PreviousCVE
@@ -252,7 +255,7 @@ func CompareAndMarkRemediations(
 			previousCVEs = append(previousCVEs, cve)
 		}
 	}
-	
+
 	// Find CVEs that disappeared (were remediated)
 	remediatedCount := 0
 	for _, prevCVE := range previousCVEs {
@@ -271,7 +274,7 @@ func CompareAndMarkRemediations(
 			remediatedCount++
 		}
 	}
-	
+
 	return remediatedCount, nil
 }
 
@@ -288,7 +291,7 @@ func GetPreviousVersion(
 	endpointName string,
 	currentSyncTime time.Time,
 ) (string, error) {
-	
+
 	query := `
 		FOR s IN sync
 			FILTER s.release_name == @release_name
@@ -298,7 +301,7 @@ func GetPreviousVersion(
 			LIMIT 1
 			RETURN s.release_version
 	`
-	
+
 	cursor, err := db.Database.Query(ctx, query, &arangodb.QueryOptions{
 		BindVars: map[string]interface{}{
 			"release_name":  releaseName,
@@ -306,19 +309,19 @@ func GetPreviousVersion(
 			"current_time":  currentSyncTime.Unix() * 1000,
 		},
 	})
-	
+
 	if err != nil {
 		return "", err
 	}
 	defer cursor.Close()
-	
+
 	if cursor.HasMore() {
 		var version string
 		_, err := cursor.ReadDocument(ctx, &version)
 		return version, err
 	}
-	
-	return "", nil  // No previous version (first deployment)
+
+	return "", nil // No previous version (first deployment)
 }
 
 // GetSyncTimestamp retrieves the sync timestamp for a specific release version.
@@ -330,7 +333,7 @@ func GetSyncTimestamp(
 	releaseVersion string,
 	endpointName string,
 ) (time.Time, error) {
-	
+
 	query := `
 		FOR s IN sync
 			FILTER s.release_name == @release_name
@@ -340,7 +343,7 @@ func GetSyncTimestamp(
 			LIMIT 1
 			RETURN s.synced_at
 	`
-	
+
 	cursor, err := db.Database.Query(ctx, query, &arangodb.QueryOptions{
 		BindVars: map[string]interface{}{
 			"release_name":    releaseName,
@@ -348,18 +351,18 @@ func GetSyncTimestamp(
 			"endpoint_name":   endpointName,
 		},
 	})
-	
+
 	if err != nil {
 		return time.Time{}, err
 	}
 	defer cursor.Close()
-	
+
 	if cursor.HasMore() {
 		var timestamp time.Time
 		_, err := cursor.ReadDocument(ctx, &timestamp)
 		return timestamp, err
 	}
-	
+
 	return time.Time{}, fmt.Errorf("no sync record found for %s version %s", releaseName, releaseVersion)
 }
 
@@ -383,7 +386,7 @@ func GetCVEsForReleaseTracking(
 	releaseName string,
 	releaseVersion string,
 ) (map[string]CVEInfo, error) {
-	
+
 	// Query to get all CVEs for this release using release2cve edges
 	query := `
 		FOR release IN release
@@ -400,19 +403,19 @@ func GetCVEsForReleaseTracking(
 					published: cve.published
 				}
 	`
-	
+
 	cursor, err := db.Database.Query(ctx, query, &arangodb.QueryOptions{
 		BindVars: map[string]interface{}{
 			"release_name":    releaseName,
 			"release_version": releaseVersion,
 		},
 	})
-	
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to query CVEs for release: %w", err)
 	}
 	defer cursor.Close()
-	
+
 	type CVERaw struct {
 		CveID          string  `json:"cve_id"`
 		Package        string  `json:"package"`
@@ -420,22 +423,22 @@ func GetCVEsForReleaseTracking(
 		SeverityScore  float64 `json:"severity_score"`
 		Published      string  `json:"published"`
 	}
-	
+
 	result := make(map[string]CVEInfo)
-	
+
 	for cursor.HasMore() {
 		var raw CVERaw
 		if _, err := cursor.ReadDocument(ctx, &raw); err != nil {
 			continue
 		}
-		
+
 		var publishedTime time.Time
 		if raw.Published != "" {
 			if t, err := time.Parse(time.RFC3339, raw.Published); err == nil {
 				publishedTime = t
 			}
 		}
-		
+
 		result[raw.CveID] = CVEInfo{
 			CVEID:          raw.CveID,
 			Package:        raw.Package,
@@ -444,7 +447,7 @@ func GetCVEsForReleaseTracking(
 			Published:      publishedTime,
 		}
 	}
-	
+
 	return result, nil
 }
 
@@ -453,7 +456,7 @@ func GetCVEsForReleaseTracking(
 // Uses IsVersionAffectedAny for validation like OSV loader.
 func CreateRelease2CVEEdges(ctx context.Context, db database.DBConnection, releaseID string) error {
 	fmt.Printf("[CreateRelease2CVEEdges] Starting for releaseID: %s\n", releaseID)
-	
+
 	// Query to get candidates that need validation
 	query := `
 		LET release = DOCUMENT(@release_id)
@@ -477,6 +480,7 @@ func CreateRelease2CVEEdges(ctx context.Context, db database.DBConnection, relea
 				FILTER (
 					sbomEdge.version_major != null AND 
 					cveEdge.introduced_major != null AND 
+					cveEdge.introduced_major > 0 AND 
 					(cveEdge.fixed_major != null OR cveEdge.last_affected_major != null)
 				) ? (
 					(sbomEdge.version_major > cveEdge.introduced_major OR
@@ -524,7 +528,7 @@ func CreateRelease2CVEEdges(ctx context.Context, db database.DBConnection, relea
 					needs_validation: sbomEdge.version_major == null OR cveEdge.introduced_major == null
 				}
 	`
-	
+
 	cursor, err := db.Database.Query(ctx, query, &arangodb.QueryOptions{
 		BindVars: map[string]interface{}{
 			"release_id": releaseID,
@@ -535,23 +539,23 @@ func CreateRelease2CVEEdges(ctx context.Context, db database.DBConnection, relea
 		return err
 	}
 	defer cursor.Close()
-	
+
 	fmt.Printf("[CreateRelease2CVEEdges] Query executed, checking for candidates...\n")
-	
+
 	type EdgeCandidate struct {
-		CveID           string            `json:"cve_id"`
-		PackagePurl     string            `json:"package_purl"`
-		PackageVersion  string            `json:"package_version"`
-		AllAffected     json.RawMessage   `json:"all_affected"`
-		NeedsValidation bool              `json:"needs_validation"`
+		CveID           string          `json:"cve_id"`
+		PackagePurl     string          `json:"package_purl"`
+		PackageVersion  string          `json:"package_version"`
+		AllAffected     json.RawMessage `json:"all_affected"`
+		NeedsValidation bool            `json:"needs_validation"`
 	}
-	
+
 	seenEdges := make(map[string]bool)
 	candidateCount := 0
 	validatedCount := 0
 	createdCount := 0
 	skippedCount := 0
-	
+
 	for cursor.HasMore() {
 		candidateCount++
 		var cand EdgeCandidate
@@ -559,10 +563,10 @@ func CreateRelease2CVEEdges(ctx context.Context, db database.DBConnection, relea
 			fmt.Printf("[CreateRelease2CVEEdges] ERROR: Failed to read candidate %d: %v\n", candidateCount, err)
 			continue
 		}
-		
+
 		fmt.Printf("[CreateRelease2CVEEdges] Candidate %d: CVE=%s, Package=%s, Version=%s, NeedsValidation=%v\n",
 			candidateCount, cand.CveID, cand.PackagePurl, cand.PackageVersion, cand.NeedsValidation)
-		
+
 		// Validate using IsVersionAffectedAny if needed
 		if cand.NeedsValidation {
 			// Parse AllAffected from JSON
@@ -572,7 +576,7 @@ func CreateRelease2CVEEdges(ctx context.Context, db database.DBConnection, relea
 				skippedCount++
 				continue
 			}
-			
+
 			if !util.IsVersionAffectedAny(cand.PackageVersion, affected) {
 				fmt.Printf("[CreateRelease2CVEEdges] Candidate %d: SKIPPED - Version not affected\n", candidateCount)
 				skippedCount++
@@ -581,7 +585,7 @@ func CreateRelease2CVEEdges(ctx context.Context, db database.DBConnection, relea
 			fmt.Printf("[CreateRelease2CVEEdges] Candidate %d: VALIDATED - Version is affected\n", candidateCount)
 			validatedCount++
 		}
-		
+
 		// Create unique key
 		edgeKey := releaseID + ":" + cand.CveID + ":" + cand.PackagePurl
 		if seenEdges[edgeKey] {
@@ -590,7 +594,7 @@ func CreateRelease2CVEEdges(ctx context.Context, db database.DBConnection, relea
 			continue
 		}
 		seenEdges[edgeKey] = true
-		
+
 		// Check if edge exists
 		checkQuery := `
 			FOR e IN release2cve
@@ -609,10 +613,10 @@ func CreateRelease2CVEEdges(ctx context.Context, db database.DBConnection, relea
 			fmt.Printf("[CreateRelease2CVEEdges] Candidate %d: ERROR checking existing edge: %v\n", candidateCount, err)
 			continue
 		}
-		
+
 		edgeExists := checkCursor.HasMore()
 		checkCursor.Close()
-		
+
 		if !edgeExists {
 			edge := map[string]interface{}{
 				"_from":           releaseID,
@@ -622,7 +626,7 @@ func CreateRelease2CVEEdges(ctx context.Context, db database.DBConnection, relea
 				"package_version": cand.PackageVersion,
 				"created_at":      time.Now(),
 			}
-			
+
 			_, err = db.Collections["release2cve"].CreateDocument(ctx, edge)
 			if err != nil {
 				fmt.Printf("[CreateRelease2CVEEdges] Candidate %d: ERROR creating edge: %v\n", candidateCount, err)
@@ -635,9 +639,9 @@ func CreateRelease2CVEEdges(ctx context.Context, db database.DBConnection, relea
 			skippedCount++
 		}
 	}
-	
+
 	fmt.Printf("[CreateRelease2CVEEdges] Summary: Total=%d, Validated=%d, Created=%d, Skipped=%d\n",
 		candidateCount, validatedCount, createdCount, skippedCount)
-	
+
 	return nil
 }
