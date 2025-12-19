@@ -13,33 +13,115 @@ import (
 )
 
 // ResolveOverview handles fetching the high-level dashboard metrics
-func ResolveOverview(_ database.DBConnection) (interface{}, error) {
-	return map[string]interface{}{
-		"total_releases":  0,
-		"total_endpoints": 0,
-		"total_cves":      0,
-	}, nil
+func ResolveOverview(db database.DBConnection) (interface{}, error) {
+	ctx := context.Background()
+	query := `
+		RETURN {
+			total_releases: LENGTH(release),
+			total_endpoints: LENGTH(endpoint),
+			total_cves: LENGTH(cve)
+		}
+	`
+	cursor, err := db.Database.Query(ctx, query, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close()
+
+	var result map[string]interface{}
+	if cursor.HasMore() {
+		_, err = cursor.ReadDocument(ctx, &result)
+	}
+	return result, err
 }
 
 // ResolveSeverityDistribution fetches current breakdown of issues
-func ResolveSeverityDistribution(_ database.DBConnection) (interface{}, error) {
-	return map[string]interface{}{
-		"critical": 0,
-		"high":     0,
-		"medium":   0,
-		"low":      0,
-	}, nil
+func ResolveSeverityDistribution(db database.DBConnection) (interface{}, error) {
+	ctx := context.Background()
+	query := `
+		LET counts = (
+			FOR r IN cve_lifecycle
+				FILTER r.is_remediated == false
+				COLLECT severity = r.severity_rating WITH COUNT INTO count
+				RETURN { [LOWER(severity)]: count }
+		)
+		RETURN MERGE(counts)
+	`
+	cursor, err := db.Database.Query(ctx, query, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close()
+
+	var result map[string]int
+	if cursor.HasMore() {
+		_, err = cursor.ReadDocument(ctx, &result)
+	}
+	return result, err
 }
 
 // ResolveTopRisks fetches the top risky assets based on type
-func ResolveTopRisks(_ database.DBConnection, _ string, _ int) (interface{}, error) {
+func ResolveTopRisks(db database.DBConnection, assetType string, limit int) (interface{}, error) {
+	ctx := context.Background()
+	var query string
+
+	if assetType == "releases" {
+		query = `
+			FOR r IN cve_lifecycle
+				FILTER r.is_remediated == false
+				COLLECT release = r.release_name, version = r.introduced_version AGGREGATE 
+					critical = SUM(r.severity_rating == "CRITICAL" ? 1 : 0),
+					high = SUM(r.severity_rating == "HIGH" ? 1 : 0),
+					total = COUNT(r)
+				SORT critical DESC, high DESC, total DESC
+				LIMIT @limit
+				RETURN {
+					name: release,
+					version: version,
+					critical_count: critical,
+					high_count: high,
+					total_vulns: total
+				}
+		`
+	} else {
+		query = `
+			FOR r IN cve_lifecycle
+				FILTER r.is_remediated == false
+				COLLECT endpoint = r.endpoint_name AGGREGATE 
+					critical = SUM(r.severity_rating == "CRITICAL" ? 1 : 0),
+					high = SUM(r.severity_rating == "HIGH" ? 1 : 0),
+					total = COUNT(r)
+				SORT critical DESC, high DESC, total DESC
+				LIMIT @limit
+				RETURN {
+					name: endpoint,
+					version: "-",
+					critical_count: critical,
+					high_count: high,
+					total_vulns: total
+				}
+		`
+	}
+
+	cursor, err := db.Database.Query(ctx, query, &arangodb.QueryOptions{
+		BindVars: map[string]interface{}{"limit": limit},
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close()
+
 	var risks []map[string]interface{}
+	for cursor.HasMore() {
+		var risk map[string]interface{}
+		if _, err := cursor.ReadDocument(ctx, &risk); err == nil {
+			risks = append(risks, risk)
+		}
+	}
 	return risks, nil
 }
 
 // ResolveVulnerabilityTrend returns daily counts of ALL open vulnerabilities
-// Uses cve_lifecycle to reconstruct the state for each day in the window.
-// FIXED: Properly parses RFC3339 string dates stored in cve_lifecycle
 func ResolveVulnerabilityTrend(db database.DBConnection, days int) ([]map[string]interface{}, error) {
 	ctx := context.Background()
 	if days <= 0 {
@@ -49,7 +131,6 @@ func ResolveVulnerabilityTrend(db database.DBConnection, days int) ([]map[string
 	now := time.Now().UTC()
 	startDate := now.AddDate(0, 0, -days).Truncate(24 * time.Hour)
 
-	// FIXED: Parse as timestamps for comparison, then format as ISO8601 for Go unmarshaling
 	query := `
 		FOR r IN cve_lifecycle
 			LET introduced_ts = DATE_TIMESTAMP(r.introduced_at)
@@ -67,8 +148,8 @@ func ResolveVulnerabilityTrend(db database.DBConnection, days int) ([]map[string
 
 	cursor, err := db.Database.Query(ctx, query, &arangodb.QueryOptions{
 		BindVars: map[string]interface{}{
-			"now":       now.Unix() * 1000,       // FIXED: Pass as millisecond timestamp
-			"startDate": startDate.Unix() * 1000, // FIXED: Pass as millisecond timestamp
+			"now":       now.Unix() * 1000,
+			"startDate": startDate.Unix() * 1000,
 		},
 	})
 	if err != nil {
@@ -92,7 +173,6 @@ func ResolveVulnerabilityTrend(db database.DBConnection, days int) ([]map[string
 	}
 
 	var trendData []map[string]interface{}
-
 	for d := 0; d <= days; d++ {
 		currentDate := startDate.AddDate(0, 0, d)
 		endOfDay := currentDate.Add(23*time.Hour + 59*time.Minute + 59*time.Second)
@@ -130,24 +210,57 @@ func ResolveVulnerabilityTrend(db database.DBConnection, days int) ([]map[string
 }
 
 // ResolveDashboardGlobalStatus calculates aggregated vulnerability counts and deltas
-func ResolveDashboardGlobalStatus(_ database.DBConnection, _ int) (map[string]interface{}, error) {
-	return map[string]interface{}{
-		"critical":    map[string]int{"count": 0, "delta": 0},
-		"high":        map[string]int{"count": 0, "delta": 0},
-		"medium":      map[string]int{"count": 0, "delta": 0},
-		"low":         map[string]int{"count": 0, "delta": 0},
-		"total_count": 0,
-		"total_delta": 0,
-	}, nil
+func ResolveDashboardGlobalStatus(db database.DBConnection, _ int) (map[string]interface{}, error) {
+	ctx := context.Background()
+	window := time.Now().AddDate(0, 0, -30).Unix() * 1000
+
+	query := `
+		LET stats = (
+			FOR r IN cve_lifecycle
+				LET introduced_ts = DATE_TIMESTAMP(r.introduced_at)
+				LET remediated_ts = r.remediated_at != null ? DATE_TIMESTAMP(r.remediated_at) : null
+				
+				RETURN {
+					severity: LOWER(r.severity_rating),
+					is_open: (r.is_remediated == false),
+					delta: (introduced_ts >= @window ? 1 : 0) - (r.is_remediated == true AND remediated_ts >= @window ? 1 : 0)
+				}
+		)
+
+		LET results = (
+			FOR s IN stats
+				COLLECT severity = s.severity AGGREGATE 
+					count = SUM(s.is_open ? 1 : 0),
+					delta = SUM(s.delta)
+				RETURN { severity: severity, count: count, delta: delta }
+		)
+
+		RETURN {
+			critical: FIRST(FOR r IN results FILTER r.severity == "critical" RETURN { count: r.count, delta: r.delta }) || { count: 0, delta: 0 },
+			high: FIRST(FOR r IN results FILTER r.severity == "high" RETURN { count: r.count, delta: r.delta }) || { count: 0, delta: 0 },
+			medium: FIRST(FOR r IN results FILTER r.severity == "medium" RETURN { count: r.count, delta: r.delta }) || { count: 0, delta: 0 },
+			low: FIRST(FOR r IN results FILTER r.severity == "low" RETURN { count: r.count, delta: r.delta }) || { count: 0, delta: 0 },
+			total_count: SUM(results[*].count),
+			total_delta: SUM(results[*].delta)
+		}
+	`
+
+	cursor, err := db.Database.Query(ctx, query, &arangodb.QueryOptions{
+		BindVars: map[string]interface{}{"window": window},
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close()
+
+	var result map[string]interface{}
+	if cursor.HasMore() {
+		_, err = cursor.ReadDocument(ctx, &result)
+	}
+	return result, err
 }
 
 // ResolveMTTR calculates comprehensive metrics defined in the Dashboard Layout.
-// It provides MTTR analysis, SLA compliance, and endpoint impact metrics.
-// FIXED: Properly handles date comparisons with RFC3339 strings.
-// ResolveMTTR calculates comprehensive metrics defined in the Dashboard Layout.
-// It provides MTTR analysis, SLA compliance, and endpoint impact metrics.
-// FIXED: Properly handles date comparisons with RFC3339 strings.
-// FIXED: Corrected aggregation field for post_deployment_cves to match sub-query output.
 func ResolveMTTR(db database.DBConnection, days int) (map[string]interface{}, error) {
 	ctx := context.Background()
 	if days <= 0 {
@@ -155,7 +268,6 @@ func ResolveMTTR(db database.DBConnection, days int) (map[string]interface{}, er
 	}
 	cutoffDate := time.Now().AddDate(0, 0, -days)
 
-	// FIXED: Parse dates as timestamps and pass cutoffDate as milliseconds
 	query := `
 		LET sla_def = { 
 			"CRITICAL": { "default": 15, "high_risk": 7 }, 
@@ -165,14 +277,7 @@ func ResolveMTTR(db database.DBConnection, days int) (map[string]interface{}, er
 			"NONE":     { "default": 365, "high_risk": 365 }
 		}
 
-		LET endpoint_types = (
-			FOR e IN endpoint 
-			RETURN { name: e.name, type: e.endpoint_type }
-		)
-		LET ep_map = MERGE(
-			FOR item IN endpoint_types 
-			RETURN { [item.name]: item.type }
-		)
+		LET ep_map = MERGE(FOR e IN endpoint RETURN { [e.name]: e.endpoint_type })
 
 		LET events = (
 			FOR r IN cve_lifecycle
@@ -186,15 +291,12 @@ func ResolveMTTR(db database.DBConnection, days int) (map[string]interface{}, er
 				LET sla_entry = HAS(sla_def, sev_key) ? sla_def[sev_key] : sla_def["NONE"]
 				LET sla_days = is_high_risk ? sla_entry.high_risk : sla_entry.default
 				
-				LET open_age = r.is_remediated ? 0 : DATE_DIFF(introduced, DATE_NOW(), "d")
-				
 				RETURN MERGE(r, {
 					endpoint_type: ep_type,
 					sla_days: sla_days,
-					open_age: open_age,
+					open_age: r.is_remediated ? 0 : DATE_DIFF(introduced, DATE_NOW(), "d"),
 					in_window_fix: (r.is_remediated AND remediated >= @cutoffDate),
-					in_window_detect: (introduced >= @cutoffDate),
-					is_post_deploy: r.disclosed_after_deployment == true
+					in_window_detect: (introduced >= @cutoffDate)
 				})
 		)
 
@@ -204,199 +306,91 @@ func ResolveMTTR(db database.DBConnection, days int) (map[string]interface{}, er
 				
 				LET fixed_in_window = (FOR g IN groups FILTER g.in_window_fix RETURN g)
 				LET count_fixed = LENGTH(fixed_in_window)
-				
 				LET sum_mttr = SUM(fixed_in_window[*].days_to_remediate)
-				LET mttr = count_fixed > 0 ? sum_mttr / count_fixed : 0
 
-				LET fixed_post = (FOR g IN groups FILTER g.in_window_fix AND g.is_post_deploy RETURN g)
+				LET fixed_post = (FOR g IN groups FILTER g.in_window_fix AND g.disclosed_after_deployment == true RETURN g)
 				LET count_fixed_post = LENGTH(fixed_post)
-				LET mttr_post = count_fixed_post > 0 ? SUM(fixed_post[*].days_to_remediate) / count_fixed_post : 0
+				LET sum_mttr_post = SUM(fixed_post[*].days_to_remediate)
 
 				LET fixed_within_sla = LENGTH(FOR g IN groups FILTER g.in_window_fix AND g.days_to_remediate <= g.sla_days RETURN 1)
-				LET pct_fixed_sla = count_fixed > 0 ? (fixed_within_sla / count_fixed) * 100 : 0
-
-				LET open_items = (FOR g IN groups FILTER g.is_remediated == false RETURN g)
+				LET open_items = (FOR g IN groups FILTER g.is_remediated == false AND g.in_window_detect == true RETURN g)
 				LET count_open = LENGTH(open_items)
 				
-				LET mean_age = count_open > 0 ? AVG(open_items[*].open_age) : 0
-				LET oldest_days = count_open > 0 ? MAX(open_items[*].open_age) : 0
-
-				LET open_post = (FOR g IN groups FILTER g.is_remediated == false AND g.is_post_deploy RETURN g)
+				LET open_post = (FOR g IN groups FILTER g.in_window_detect == true AND g.is_remediated == false AND g.disclosed_after_deployment == true RETURN g)
 				LET count_open_post = LENGTH(open_post)
-				LET mean_age_post = count_open_post > 0 ? AVG(open_post[*].open_age) : 0
 
 				LET open_beyond_sla = LENGTH(FOR g IN groups FILTER g.is_remediated == false AND g.open_age > g.sla_days RETURN 1)
-				LET pct_open_sla = count_open > 0 ? (open_beyond_sla / count_open) * 100 : 0
-
-				LET new_detected = LENGTH(FOR g IN groups FILTER g.in_window_detect RETURN 1)
 				
 				RETURN {
 					severity: severity,
-					mttr: mttr,
-					mttr_post_deployment: mttr_post,
-					fixed_within_sla_pct: pct_fixed_sla,
-					backlog_count: count_open,
+					mttr: count_fixed > 0 ? sum_mttr / count_fixed : 0,
+					mttr_post_deployment: count_fixed_post > 0 ? sum_mttr_post / count_fixed_post : 0,
+					fixed_within_sla_pct: count_fixed > 0 ? (fixed_within_sla * 100.0 / count_fixed) : 0,
 					open_count: count_open,
-					mean_open_age: mean_age,
-					mean_open_age_post_deploy: mean_age_post,
-					oldest_open_days: oldest_days,
-					open_beyond_sla_pct: pct_open_sla,
+					backlog_count: count_open,
+					mean_open_age: count_open > 0 ? AVG(open_items[*].open_age) : 0,
+					mean_open_age_post_deploy: count_open_post > 0 ? AVG(open_post[*].open_age) : 0,
+					oldest_open_days: count_open > 0 ? MAX(open_items[*].open_age) : 0,
+					open_beyond_sla_pct: count_open > 0 ? (open_beyond_sla * 100.0 / count_open) : 0,
 					open_beyond_sla_count: open_beyond_sla,
-					new_detected: new_detected,
+					new_detected: LENGTH(FOR g IN groups FILTER g.in_window_detect RETURN 1),
 					remediated: count_fixed,
-					open_post_count: count_open_post
+					open_post_count: count_open_post,
+					
+					// Hidden fields for weighted calculations
+					_sum_mttr: sum_mttr || 0,
+					_sum_mttr_post: sum_mttr_post || 0,
+					_count_fixed_post: count_fixed_post,
+					_sum_open_age: SUM(open_items[*].open_age) || 0,
+					_sum_open_age_post: SUM(open_post[*].open_age) || 0,
+					_count_fixed_within_sla: fixed_within_sla
 				}
 		)
 
-		LET unique_affected_endpoints = LENGTH(UNIQUE(
-			FOR e IN events 
-			FILTER e.is_remediated == false 
-			RETURN e.endpoint_name
-		))
-
-		LET post_deploy_open = (
-			FOR e IN events
-			FILTER e.is_remediated == false AND e.is_post_deploy == true
-			RETURN e
-		)
-		
-		LET post_deploy_by_type = (
-			FOR e IN post_deploy_open
-				COLLECT type = e.endpoint_type WITH COUNT INTO count
-				RETURN { type: type, count: count }
-		)
-
 		LET total_fixed = SUM(severity_groups[*].remediated)
-		
+		LET total_open = SUM(severity_groups[*].open_count)
+		LET total_open_post = SUM(severity_groups[*].open_post_count)
+
 		LET exec_summary = {
 			total_new_cves: SUM(severity_groups[*].new_detected),
 			total_fixed_cves: total_fixed,
-			post_deployment_cves: SUM(severity_groups[*].open_post_count), // FIXED: Now uses correct field name
+			post_deployment_cves: total_open_post,
 			
-			mttr_all: LENGTH(severity_groups) > 0 ? AVG(severity_groups[*].mttr) : 0,
-			mttr_post_deployment: LENGTH(severity_groups) > 0 ? AVG(severity_groups[*].mttr_post_deployment) : 0,
+			mttr_all: total_fixed > 0 ? SUM(severity_groups[*]._sum_mttr) / total_fixed : 0,
+			mttr_post_deployment: SUM(severity_groups[*]._count_fixed_post) > 0 ? SUM(severity_groups[*]._sum_mttr_post) / SUM(severity_groups[*]._count_fixed_post) : 0,
 			
-			mean_open_age_all: LENGTH(severity_groups) > 0 ? AVG(severity_groups[*].mean_open_age) : 0,
-			mean_open_age_post_deploy: LENGTH(severity_groups) > 0 ? AVG(severity_groups[*].mean_open_age_post_deploy) : 0,
+			mean_open_age_all: total_open > 0 ? SUM(severity_groups[*]._sum_open_age) / total_open : 0,
+			mean_open_age_post_deploy: total_open_post > 0 ? SUM(severity_groups[*]._sum_open_age_post) / total_open_post : 0,
 			
-			open_cves_beyond_sla_pct: SUM(severity_groups[*].backlog_count) > 0 ? 
-				(SUM(severity_groups[*].open_beyond_sla_count) / SUM(severity_groups[*].backlog_count)) * 100 : 0,
+			open_cves_beyond_sla_pct: total_open > 0 ? (SUM(severity_groups[*].open_beyond_sla_count) * 100.0 / total_open) : 0,
+			fixed_within_sla_pct: total_fixed > 0 ? (SUM(severity_groups[*]._count_fixed_within_sla) * 100.0 / total_fixed) : 0,
 
-			fixed_within_sla_pct: total_fixed > 0 ? AVG(severity_groups[*].fixed_within_sla_pct) : 0,
-
-			oldest_open_critical_days: MAX(
-				FOR g IN severity_groups 
-				FILTER g.severity == "CRITICAL" 
-				RETURN g.oldest_open_days
-			),
-			
-			backlog_delta: SUM(severity_groups[*].new_detected) - SUM(severity_groups[*].remediated)
+			oldest_open_critical_days: MAX(FOR g IN severity_groups FILTER g.severity == "CRITICAL" RETURN g.oldest_open_days),
+			backlog_delta: SUM(severity_groups[*].new_detected) - total_fixed
 		}
 
 		RETURN {
 			by_severity: severity_groups,
 			executive_summary: exec_summary,
 			endpoint_impact: {
-				affected_endpoints_count: unique_affected_endpoints,
-				post_deployment_cves_by_type: post_deploy_by_type
+				affected_endpoints_count: LENGTH(UNIQUE(FOR e IN events FILTER e.is_remediated == false RETURN e.endpoint_name)),
+				post_deployment_cves_by_type: (FOR e IN events FILTER e.is_remediated == false AND e.disclosed_after_deployment == true COLLECT type = e.endpoint_type WITH COUNT INTO count RETURN { type: type, count: count })
 			}
 		}
 	`
 
 	cursor, err := db.Database.Query(ctx, query, &arangodb.QueryOptions{
-		BindVars: map[string]interface{}{
-			"cutoffDate": cutoffDate.Unix() * 1000, // FIXED: Pass as millisecond timestamp
-		},
+		BindVars: map[string]interface{}{"cutoffDate": cutoffDate.Unix() * 1000},
 	})
 	if err != nil {
 		return nil, err
 	}
 	defer cursor.Close()
 
-	type ExecSummary struct {
-		TotalNew               int     `json:"total_new_cves"`
-		TotalFixed             int     `json:"total_fixed_cves"`
-		PostDeploymentCount    int     `json:"post_deployment_cves"`
-		MTTRAll                float64 `json:"mttr_all"`
-		MTTRPost               float64 `json:"mttr_post_deployment"`
-		MeanOpenAge            float64 `json:"mean_open_age_all"`
-		MeanOpenAgePost        float64 `json:"mean_open_age_post_deploy"`
-		OpenBeyondSLAPct       float64 `json:"open_cves_beyond_sla_pct"`
-		FixedWithinSLAPct      float64 `json:"fixed_within_sla_pct"`
-		OldestOpenCriticalDays float64 `json:"oldest_open_critical_days"`
-		BacklogDelta           int     `json:"backlog_delta"`
-	}
-
-	type SeverityRow struct {
-		Severity           string  `json:"severity"`
-		MTTR               float64 `json:"mttr"`
-		MTTRPost           float64 `json:"mttr_post_deployment"`
-		FixedWithinSLAPct  float64 `json:"fixed_within_sla_pct"`
-		BacklogCount       int     `json:"backlog_count"`
-		OpenCount          int     `json:"open_count"`
-		MeanOpenAge        float64 `json:"mean_open_age"`
-		MeanOpenAgePost    float64 `json:"mean_open_age_post_deploy"`
-		OldestOpenDays     float64 `json:"oldest_open_days"`
-		OpenBeyondSLAPct   float64 `json:"open_beyond_sla_pct"`
-		OpenBeyondSLACount int     `json:"open_beyond_sla_count"`
-		NewDetected        int     `json:"new_detected"`
-		Remediated         int     `json:"remediated"`
-	}
-
-	type ImpactCount struct {
-		Type  string `json:"type"`
-		Count int    `json:"count"`
-	}
-
-	type ImpactMetrics struct {
-		AffectedCount  int           `json:"affected_endpoints_count"`
-		PostDeployType []ImpactCount `json:"post_deployment_cves_by_type"`
-	}
-
-	type DBResult struct {
-		BySeverity       []SeverityRow `json:"by_severity"`
-		ExecutiveSummary ExecSummary   `json:"executive_summary"`
-		EndpointImpact   ImpactMetrics `json:"endpoint_impact"`
-	}
-
-	var data DBResult
+	var data map[string]interface{}
 	if cursor.HasMore() {
-		_, err := cursor.ReadDocument(ctx, &data)
-		if err != nil {
-			return nil, err
-		}
+		_, err = cursor.ReadDocument(ctx, &data)
 	}
 
-	order := []string{"CRITICAL", "HIGH", "MEDIUM", "LOW"}
-	sevMap := make(map[string]SeverityRow)
-	for _, row := range data.BySeverity {
-		sevMap[row.Severity] = row
-	}
-
-	var orderedRows []SeverityRow
-	for _, sev := range order {
-		if row, ok := sevMap[sev]; ok {
-			orderedRows = append(orderedRows, row)
-		} else {
-			orderedRows = append(orderedRows, SeverityRow{Severity: sev})
-		}
-	}
-	for _, row := range data.BySeverity {
-		found := false
-		for _, o := range order {
-			if row.Severity == o {
-				found = true
-				break
-			}
-		}
-		if !found {
-			orderedRows = append(orderedRows, row)
-		}
-	}
-
-	return map[string]interface{}{
-		"executive_summary": data.ExecutiveSummary,
-		"by_severity":       orderedRows,
-		"endpoint_impact":   data.EndpointImpact,
-	}, nil
+	return data, err
 }
