@@ -244,21 +244,21 @@ func CleanPURL(purlStr string) (string, error) {
 	return strings.ToLower(cleaned.ToString()), nil
 }
 
-// GetBasePURL removes the version component from a PURL to create a base package identifier
-// This is used for matching CVE PURLs (which lack versions) with SBOM component PURLs (which include versions)
-// Example: pkg:npm/lodash@4.17.20 -> pkg:npm/lodash
+// GetBasePURL removes the version component from a PURL to create a base package identifier.
+// Used for matching CVE PURLs with SBOM component PURLs.
+// Example: pkg:apk/wolfi/glibc@2.42-r4 -> pkg:apk/wolfi/glibc
 func GetBasePURL(purlStr string) (string, error) {
 	parsed, err := packageurl.FromString(purlStr)
 	if err != nil {
 		return "", err
 	}
 
-	// Create new PURL without version, qualifiers, and subpath
+	// FIX: Preserve the Namespace (e.g., "wolfi", "debian") to match OSV Loader logic.
+	// This ensures util.SanitizeKey generates matching Hub IDs.
 	base := packageurl.PackageURL{
 		Type:      parsed.Type,
-		Namespace: parsed.Namespace,
+		Namespace: parsed.Namespace, // Changed from "" to parsed.Namespace
 		Name:      parsed.Name,
-		// Version, Qualifiers and Subpath are intentionally omitted
 	}
 
 	return strings.ToLower(base.ToString()), nil

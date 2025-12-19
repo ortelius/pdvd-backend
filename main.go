@@ -115,7 +115,6 @@ func main() {
 	log.Printf("Starting server on port %s", port)
 	log.Printf("REST API endpoints available at /api/v1/*")
 	log.Printf("GraphQL endpoint available at /api/v1/graphql")
-	log.Printf("Admin endpoints available at /api/v1/admin/*")
 	if err := app.Listen(":" + port); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}

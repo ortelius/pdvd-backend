@@ -9,6 +9,7 @@ import (
 
 	"github.com/arangodb/go-driver/v2/arangodb"
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/osv-scanner/pkg/models"
 	"github.com/ortelius/pdvd-backend/v12/database"
 	"github.com/ortelius/pdvd-backend/v12/model"
 	"github.com/ortelius/pdvd-backend/v12/restapi/modules/lifecycle"
@@ -100,10 +101,21 @@ func PostSyncWithEndpoint(db database.DBConnection) fiber.Handler {
 		// Step 4: Update CVE lifecycle tracking (NEW LIFECYCLE INTEGRATION)
 		// Process each synced release for lifecycle tracking
 		for releaseName, releaseVersion := range updatedReleases {
-			// Get CVEs for this release
+			fmt.Printf("Processing lifecycle for %s version %s on endpoint %s\n",
+				releaseName, releaseVersion, req.EndpointName)
+
+			// Get CVEs for this release from release2cve edges
 			sbomCVEs, err := getCVEsForRelease(ctx, db, releaseName, releaseVersion)
 			if err != nil {
 				fmt.Printf("Warning: Failed to get CVEs for %s version %s: %v\n", releaseName, releaseVersion, err)
+				continue
+			}
+
+			fmt.Printf("Found %d CVEs for %s version %s\n", len(sbomCVEs), releaseName, releaseVersion)
+
+			// Skip if no CVEs found
+			if len(sbomCVEs) == 0 {
+				fmt.Printf("No CVEs found for %s version %s - no vulnerable packages in SBOM\n", releaseName, releaseVersion)
 				continue
 			}
 
@@ -119,6 +131,8 @@ func PostSyncWithEndpoint(db database.DBConnection) fiber.Handler {
 			if err != nil {
 				fmt.Printf("Warning: Failed to update CVE lifecycle for %s version %s: %v\n", releaseName, releaseVersion, err)
 				// Don't fail the sync, just log the error
+			} else {
+				fmt.Printf("Successfully processed lifecycle for %s version %s\n", releaseName, releaseVersion)
 			}
 		}
 
@@ -129,10 +143,17 @@ func PostSyncWithEndpoint(db database.DBConnection) fiber.Handler {
 
 // getCVEsForRelease retrieves CVEs affecting a specific release
 func getCVEsForRelease(ctx context.Context, db database.DBConnection, releaseName, releaseVersion string) ([]lifecycle.CVEInfo, error) {
+	fmt.Printf("[getCVEsForRelease] Looking for release: name=%s, version=%s\n", releaseName, releaseVersion)
+
 	query := `
 		FOR release IN release
 			FILTER release.name == @name AND release.version == @version
 			LIMIT 1
+			
+			LET edgeCount = LENGTH(
+				FOR cve IN 1..1 OUTBOUND release release2cve
+					RETURN 1
+			)
 			
 			FOR cve, edge IN 1..1 OUTBOUND release release2cve
 				RETURN {
@@ -151,6 +172,7 @@ func getCVEsForRelease(ctx context.Context, db database.DBConnection, releaseNam
 		},
 	})
 	if err != nil {
+		fmt.Printf("[getCVEsForRelease] ERROR: Query failed: %v\n", err)
 		return nil, err
 	}
 	defer cursor.Close()
@@ -166,6 +188,7 @@ func getCVEsForRelease(ctx context.Context, db database.DBConnection, releaseNam
 		}
 
 		if _, err := cursor.ReadDocument(ctx, &raw); err != nil {
+			fmt.Printf("[getCVEsForRelease] ERROR: Failed to read document: %v\n", err)
 			continue
 		}
 
@@ -185,6 +208,7 @@ func getCVEsForRelease(ctx context.Context, db database.DBConnection, releaseNam
 		})
 	}
 
+	fmt.Printf("[getCVEsForRelease] Found %d CVEs for %s version %s\n", len(cves), releaseName, releaseVersion)
 	return cves, nil
 }
 
@@ -534,6 +558,270 @@ func processRelease(ctx context.Context, db database.DBConnection, relSync model
 	}
 }
 
+// batchFindOrCreatePURLs creates or finds PURL documents with consistent key generation.
+// This matches the OSV loader's key generation strategy to enable proper hub-spoke queries.
+// CRITICAL FIX: Uses util.SanitizeKey() to generate explicit _key values, ensuring
+// sbom2purl and cve2purl edges point to the same PURL documents.
+func batchFindOrCreatePURLs(ctx context.Context, db database.DBConnection, purls []string) (map[string]string, error) {
+	if len(purls) == 0 {
+		return make(map[string]string), nil
+	}
+
+	result := make(map[string]string)
+
+	// Process each PURL: sanitize key and upsert document
+	for _, basePurl := range purls {
+		// Use util.SanitizeKey() to match OSV loader behavior
+		purlKey := util.SanitizeKey(basePurl)
+
+		// Create PURL document with explicit _key (same as OSV loader)
+		purlNode := map[string]interface{}{
+			"_key":    purlKey,
+			"purl":    basePurl,
+			"objtype": "PURL",
+		}
+
+		// Try to create document (will fail if exists, which is fine)
+		_, err := db.Collections["purl"].CreateDocument(ctx, purlNode)
+		if err != nil {
+			// Document already exists - this is expected and OK
+		}
+
+		// Build document ID: purl/pkg:ecosystem-name-package
+		purlDocID := "purl/" + purlKey
+
+		// Map base PURL to document ID
+		result[basePurl] = purlDocID
+	}
+
+	return result, nil
+}
+
+// processSBOMComponentsWithFixedPURLs processes SBOM components with corrected PURL key generation.
+// This replaces sbom.ProcessSBOMComponents to ensure consistent PURL keys with OSV loader.
+// processSBOMComponentsWithFixedPURLs processes SBOM components with corrected PURL key generation.
+func processSBOMComponentsWithFixedPURLs(ctx context.Context, db database.DBConnection, sbomData model.SBOM, sbomID string) error {
+	var sbomContent map[string]interface{}
+	if err := json.Unmarshal(sbomData.Content, &sbomContent); err != nil {
+		return fmt.Errorf("failed to unmarshal SBOM content: %w", err)
+	}
+
+	components, ok := sbomContent["components"].([]interface{})
+	if !ok || len(components) == 0 {
+		return nil
+	}
+
+	var basePurls []string
+	componentData := make([]map[string]interface{}, 0, len(components))
+
+	for _, comp := range components {
+		compMap, ok := comp.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		purl, ok := compMap["purl"].(string)
+		if !ok || purl == "" {
+			continue
+		}
+
+		cleaned, err := util.CleanPURL(purl)
+		if err != nil {
+			continue
+		}
+
+		// util.GetBasePURL now preserves namespace
+		basePurl, err := util.GetBasePURL(cleaned)
+		if err != nil {
+			continue
+		}
+
+		version := compMap["version"]
+		if version == nil {
+			version = ""
+		}
+
+		componentData = append(componentData, map[string]interface{}{
+			"basePurl":  basePurl,
+			"fullPurl":  cleaned,
+			"version":   version,
+			"component": compMap,
+		})
+
+		basePurls = append(basePurls, basePurl)
+	}
+
+	if len(basePurls) == 0 {
+		return nil
+	}
+
+	purlMap, err := batchFindOrCreatePURLs(ctx, db, basePurls)
+	if err != nil {
+		return fmt.Errorf("failed to create PURLs: %w", err)
+	}
+
+	// Create sbom2purl edges
+	for _, data := range componentData {
+		basePurl := data["basePurl"].(string)
+		purlDocID, exists := purlMap[basePurl]
+		if !exists {
+			continue
+		}
+
+		versionStr, _ := data["version"].(string)
+		fullPurl, _ := data["fullPurl"].(string)
+		parsed := util.ParseSemanticVersion(versionStr)
+
+		edge := map[string]interface{}{
+			"_from":     sbomID,
+			"_to":       purlDocID,
+			"version":   versionStr,
+			"full_purl": fullPurl,
+		}
+
+		if parsed.Major != nil {
+			edge["version_major"] = *parsed.Major
+		}
+		if parsed.Minor != nil {
+			edge["version_minor"] = *parsed.Minor
+		}
+		if parsed.Patch != nil {
+			edge["version_patch"] = *parsed.Patch
+		}
+
+		_, err := db.Collections["sbom2purl"].CreateDocument(ctx, edge)
+		if err != nil {
+			fmt.Printf("Warning: Failed to create sbom2purl edge for %s: %v\n", basePurl, err)
+		}
+	}
+
+	return nil
+}
+
+// linkReleaseToExistingCVEs finds matching CVEs for a release and creates materialized edges
+func linkReleaseToExistingCVEs(ctx context.Context, db database.DBConnection, releaseID, releaseKey string) error {
+	// Query to find matching CVEs using unified PURL IDs
+	query := `
+		FOR r IN release
+			FILTER r._key == @releaseKey
+			
+			FOR sbom IN 1..1 OUTBOUND r release2sbom
+				FOR sbomEdge IN sbom2purl
+					FILTER sbomEdge._from == sbom._id
+					LET purl = DOCUMENT(sbomEdge._to)
+					FILTER purl != null
+					
+					FOR cveEdge IN cve2purl
+						// Join on the unified PURL ID generated by both Loader and Sync
+						FILTER cveEdge._to == purl._id
+						
+						FILTER (
+							sbomEdge.version_major != null AND 
+							cveEdge.introduced_major != null AND 
+							(cveEdge.fixed_major != null OR cveEdge.last_affected_major != null)
+						) ? (
+							(sbomEdge.version_major > cveEdge.introduced_major OR
+							(sbomEdge.version_major == cveEdge.introduced_major AND 
+							sbomEdge.version_minor > cveEdge.introduced_minor) OR
+							(sbomEdge.version_major == cveEdge.introduced_major AND 
+							sbomEdge.version_minor == cveEdge.introduced_minor AND 
+							sbomEdge.version_patch >= cveEdge.introduced_patch))
+							AND
+							(cveEdge.fixed_major != null ? (
+								sbomEdge.version_major < cveEdge.fixed_major OR
+								(sbomEdge.version_major == cveEdge.fixed_major AND 
+								sbomEdge.version_minor < cveEdge.fixed_minor) OR
+								(sbomEdge.version_major == cveEdge.fixed_major AND 
+								sbomEdge.version_minor == cveEdge.fixed_minor AND 
+								sbomEdge.version_patch < cveEdge.fixed_patch)
+							) : (
+								sbomEdge.version_major < cveEdge.last_affected_major OR
+								(sbomEdge.version_major == cveEdge.last_affected_major AND 
+								sbomEdge.version_minor < cveEdge.last_affected_minor) OR
+								(sbomEdge.version_major == cveEdge.last_affected_major AND 
+								sbomEdge.version_minor == cveEdge.last_affected_minor AND 
+								sbomEdge.version_patch <= cveEdge.last_affected_patch)
+							))
+						) : true
+						
+						LET cve = DOCUMENT(cveEdge._from)
+						FILTER cve != null
+						
+						LET matchedAffected = (
+							FOR affected IN cve.affected != null ? cve.affected : []
+								LET cveBasePurl = affected.package.purl != null ? 
+									affected.package.purl : 
+									CONCAT("pkg:", LOWER(affected.package.ecosystem), "/", affected.package.name)
+								FILTER cveBasePurl == purl.purl
+								RETURN affected
+						)
+						FILTER LENGTH(matchedAffected) > 0
+						
+						RETURN {
+							cve_id: cve._id,
+							package_purl: sbomEdge.full_purl,
+							package_version: sbomEdge.version,
+							all_affected: matchedAffected,
+							needs_validation: sbomEdge.version_major == null OR cveEdge.introduced_major == null
+						}
+	`
+
+	cursor, err := db.Database.Query(ctx, query, &arangodb.QueryOptions{
+		BindVars: map[string]interface{}{
+			"releaseKey": releaseKey,
+		},
+	})
+	if err != nil {
+		return err
+	}
+	defer cursor.Close()
+
+	type Candidate struct {
+		CveID           string            `json:"cve_id"`
+		PackagePurl     string            `json:"package_purl"`
+		PackageVersion  string            `json:"package_version"`
+		AllAffected     []models.Affected `json:"all_affected"`
+		NeedsValidation bool              `json:"needs_validation"`
+	}
+
+	var edgesToInsert []map[string]interface{}
+	seenInstances := make(map[string]bool)
+
+	for cursor.HasMore() {
+		var cand Candidate
+		if _, err := cursor.ReadDocument(ctx, &cand); err != nil {
+			continue
+		}
+
+		instanceKey := cand.CveID + ":" + cand.PackagePurl
+		if seenInstances[instanceKey] {
+			continue
+		}
+
+		if cand.NeedsValidation {
+			if !util.IsVersionAffectedAny(cand.PackageVersion, cand.AllAffected) {
+				continue
+			}
+		}
+
+		seenInstances[instanceKey] = true
+		edgesToInsert = append(edgesToInsert, map[string]interface{}{
+			"_from":           releaseID,
+			"_to":             cand.CveID,
+			"type":            "static_analysis",
+			"package_purl":    cand.PackagePurl,
+			"package_version": cand.PackageVersion,
+			"created_at":      time.Now(),
+		})
+	}
+
+	if len(edgesToInsert) > 0 {
+		return sbom.BatchInsertEdges(ctx, db, "release2cve", edgesToInsert)
+	}
+
+	return nil
+}
+
 func processSBOMForRelease(ctx context.Context, db database.DBConnection, sbomData *model.SBOM,
 	releaseID string) bool {
 
@@ -563,8 +851,24 @@ func processSBOMForRelease(ctx context.Context, db database.DBConnection, sbomDa
 		return false
 	}
 
-	if err := sbom.ProcessSBOMComponents(ctx, db, *sbomData, sbomID); err != nil {
+	// CRITICAL FIX: Process SBOM components with corrected PURL key generation
+	// Uses batchFindOrCreatePURLs to ensure consistent keys with OSV loader
+	if err := processSBOMComponentsWithFixedPURLs(ctx, db, *sbomData, sbomID); err != nil {
+		fmt.Printf("ERROR: Failed to process SBOM components: %v\n", err)
 		return false
+	}
+
+	// Create release2cve edges using the proven working approach
+	fmt.Printf("Creating release2cve edges for release: %s\n", releaseID)
+
+	// Extract release key from releaseID (format: "release/key")
+	releaseKey := releaseID[8:] // Skip "release/" prefix
+
+	if err := linkReleaseToExistingCVEs(ctx, db, releaseID, releaseKey); err != nil {
+		fmt.Printf("ERROR: Failed to create release2cve edges for %s: %v\n", releaseID, err)
+		// Don't fail - OSV loader can create these later
+	} else {
+		fmt.Printf("Successfully created release2cve edges for %s\n", releaseID)
 	}
 
 	return true
