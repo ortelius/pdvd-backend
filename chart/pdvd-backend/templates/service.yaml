@@ -13,13 +13,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+{{- if eq (default "glb" .Values.ingress.type) "glb" }}
+# BACKEND CONFIG - Increases timeout to 5 minutes for long-running sync operations
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: {{ include "microservice.name" . }}-backend-config
+spec:
+  timeoutSec: 300  # 5 minutes - matches client timeout, prevents 502 errors
+  connectionDraining:
+    drainingTimeoutSec: 60
+{{- end }}
+---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "microservice.name" . }}
+  name: pdvd-backend
+  {{- if eq (default "glb" .Values.ingress.type) "glb" }}
+  annotations:
+    cloud.google.com/backend-config: '{"default": "{{ include "microservice.name" . }}-backend-config"}'
+  {{- end }}
 spec:
   selector:
-    app: {{ include "microservice.name" . }}
+    app: pdvd-backend
   ports:
     - protocol: TCP
       port: 8080
