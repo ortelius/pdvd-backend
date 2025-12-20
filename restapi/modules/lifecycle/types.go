@@ -27,7 +27,7 @@ type CVEInfoTracking struct {
 	Published      time.Time
 }
 
-// CVEInfo holds CVE information including the CVE ID
+// CVEInfo holds CVE information including the CVE ID and release context
 // Used by sync handler and OSV loader for creating lifecycle records
 type CVEInfo struct {
 	CVEID          string
@@ -35,4 +35,6 @@ type CVEInfo struct {
 	SeverityRating string
 	SeverityScore  float64
 	Published      time.Time
+	ReleaseName    string // ADDED: Context for lifecycle identification
+	ReleaseVersion string // ADDED: Context for lifecycle identification
 }
