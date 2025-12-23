@@ -27,10 +27,7 @@ func getFloatValue(f *float64) float64 {
 	return *f
 }
 
-// graphql/modules/releases/resolvers.go
-
 // ResolveReleaseVulnerabilities fetches vulnerabilities associated with a specific release.
-// Uses release2cve materialized edges - no validation needed
 func ResolveReleaseVulnerabilities(db database.DBConnection, name, version string) ([]map[string]interface{}, error) {
 	ctx := context.Background()
 
@@ -39,7 +36,6 @@ func ResolveReleaseVulnerabilities(db database.DBConnection, name, version strin
 		decodedName = name
 	}
 
-	// SIMPLIFIED QUERY: Uses release2cve edge (pre-validated)
 	query := `
 		FOR release IN release
 			FILTER release.name == @name AND release.version == @version
@@ -55,13 +51,9 @@ func ResolveReleaseVulnerabilities(db database.DBConnection, name, version strin
 					published: cve.published,
 					modified: cve.modified,
 					aliases: cve.aliases,
-					
-					// Retrieved directly from the edge
 					package: edge.package_purl,
 					package_version: edge.package_version,
 					full_purl: edge.package_purl,
-					
-					// Still needed for fixed_in calculation
 					all_affected: cve.affected
 				}
 	`
@@ -102,14 +94,12 @@ func ResolveReleaseVulnerabilities(db database.DBConnection, name, version strin
 			continue
 		}
 
-		// --- CHANGED START ---
-		// Use composite key (CVE ID + Package) to allow multiple instances of the same CVE
+		// Methodology: One record for every unique CVE ID + Package combination
 		key := result.CveID + ":" + result.Package
 		if seen[key] {
 			continue
 		}
 		seen[key] = true
-		// --- CHANGED END ---
 
 		var cvssScore string
 		for _, sev := range result.Severity {
@@ -205,8 +195,7 @@ func ResolveAffectedEndpoints(db database.DBConnection, name, version string) ([
 	return endpoints, nil
 }
 
-// ResolveAffectedReleases fetches releases affected by vulnerabilities of a specific severity.
-// Uses release2cve materialized edges - no validation needed
+// ResolveAffectedReleases updated to count unique CVE ID + Package combinations
 func ResolveAffectedReleases(db database.DBConnection, severity string) ([]interface{}, error) {
 	ctx := context.Background()
 	severityScore := util.GetSeverityScore(severity)
@@ -232,9 +221,7 @@ func ResolveAffectedReleases(db database.DBConnection, severity string) ([]inter
 			LET sbomData = (
 				FOR s IN 1..1 OUTBOUND latestRelease release2sbom
 					LIMIT 1
-					RETURN { 
-						id: s._id
-					}
+					RETURN { id: s._id }
 			)[0]
 
 			LET dependencyCount = (
@@ -253,7 +240,6 @@ func ResolveAffectedReleases(db database.DBConnection, severity string) ([]inter
 					RETURN count
 			)[0]
 
-			// Use release2cve materialized edges (pre-validated)
 			LET cveMatches = (
 				FOR cve, edge IN 1..1 OUTBOUND latestRelease release2cve
                     FILTER @severityScore == 0.0 OR cve.database_specific.cvss_base_score >= @severityScore
@@ -268,8 +254,6 @@ func ResolveAffectedReleases(db database.DBConnection, severity string) ([]inter
                         cve_modified: cve.modified,
                         cve_aliases: cve.aliases,
                         all_affected: cve.affected, 
-                        
-                        // Retrieved directly from materialized edge
                         package: edge.package_purl,
                         version: edge.package_version,
                         full_purl: edge.package_purl
@@ -280,12 +264,13 @@ func ResolveAffectedReleases(db database.DBConnection, severity string) ([]inter
 			
 			LET maxSeverity = LENGTH(cveMatches) > 0 ? MAX(cveMatches[*].cve_severity_score) : 0
 			
-			LET uniqueCves = (
+			// Methodology Fix: Count one record for every unique CVE ID + Package combination
+			LET uniqueInstances = (
 				FOR match IN cveMatches
-					COLLECT cveId = match.cve_id
+					COLLECT cveId = match.cve_id, package = match.package
 					RETURN 1
 			)
-			LET vulnerabilityCount = LENGTH(uniqueCves)
+			LET vulnerabilityCount = LENGTH(uniqueInstances)
 			
 			LET previousRelease = (
 				FOR release IN groupedReleases
@@ -303,16 +288,16 @@ func ResolveAffectedReleases(db database.DBConnection, severity string) ([]inter
 			LET prevVulnCount = previousRelease != null ? (
 				LET prevCveMatches = (
 					FOR cve, edge IN 1..1 OUTBOUND previousRelease release2cve
-						RETURN { cve_id: cve.id }
+						RETURN { cve_id: cve.id, package: edge.package_purl }
 				)
 				
-				LET prevUniqueCves = (
+				LET prevUniqueInstances = (
 					FOR match IN prevCveMatches
-						COLLECT cveId = match.cve_id
+						COLLECT cveId = match.cve_id, package = match.package
 						RETURN 1
 				)
 				
-				RETURN LENGTH(prevUniqueCves)
+				RETURN LENGTH(prevUniqueInstances)
 			)[0] : null
 			
 			LET vulnerabilityCountDelta = prevVulnCount != null ? (vulnerabilityCount - prevVulnCount) : null
@@ -469,11 +454,10 @@ func ResolveAffectedReleases(db database.DBConnection, severity string) ([]inter
 	return results, nil
 }
 
-// Helper function to convert generic map structure to models.Affected for util functions
+// Helper function to convert generic map structure to models.Affected
 func convertToModelsAffected(allAffected []map[string]interface{}) []models.Affected {
 	var result []models.Affected
 	for _, affectedMap := range allAffected {
-		// Convert map to JSON bytes then to struct to ensure proper field mapping
 		bytes, err := json.Marshal(affectedMap)
 		if err != nil {
 			continue

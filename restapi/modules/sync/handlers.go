@@ -3,7 +3,6 @@ package sync
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -108,11 +107,6 @@ func PostSyncWithEndpoint(db database.DBConnection) fiber.Handler {
 				continue
 			}
 
-			// Skip if no CVEs found
-			if len(sbomCVEs) == 0 {
-				continue
-			}
-
 			// Process lifecycle tracking for this release
 			err = ProcessSync(
 				ctx, db,
@@ -133,7 +127,6 @@ func PostSyncWithEndpoint(db database.DBConnection) fiber.Handler {
 }
 
 // getCVEsForRelease retrieves CVEs affecting a specific release
-// FIXED: Returns base PURL from package_base field for lifecycle matching
 func getCVEsForRelease(ctx context.Context, db database.DBConnection, releaseName, releaseVersion string) ([]lifecycle.CVEInfo, error) {
 	query := `
 		FOR release IN release
@@ -196,7 +189,7 @@ func getCVEsForRelease(ctx context.Context, db database.DBConnection, releaseNam
 	return cves, nil
 }
 
-// ProcessSync handles sync event and updates lifecycle tracking.
+// ProcessSync handles sync event and updates lifecycle tracking using version snapshots.
 func ProcessSync(
 	ctx context.Context,
 	db database.DBConnection,
@@ -207,55 +200,26 @@ func ProcessSync(
 	syncedAt time.Time,
 ) error {
 
-	// Step 1: Find previous version (if any)
-	previousVersion, err := lifecycle.GetPreviousVersion(
-		ctx, db,
-		releaseName, endpointName,
-		syncedAt,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to get previous version: %w", err)
+	// Step 0: Supersede ALL active records for this app/endpoint.
+	// This prevents "Zombie Records" by ensuring we never leave old versions open.
+	// We do this BEFORE writing new records to ensure a clean slate.
+	if err := lifecycle.SupersedeAllActiveCVEs(ctx, db, endpointName, releaseName, syncedAt); err != nil {
+		return fmt.Errorf("failed to supersede old records: %w", err)
 	}
 
-	isFirstDeployment := previousVersion == ""
-
-	// Step 2: Create lifecycle records for all CVEs in this version
-	currentCVEMap := make(map[string]lifecycle.CVEInfo)
-
+	// Step 2: Create audit records for current snapshot version.
+	// Any records closed in Step 0 that are present here will be "resurrected" (marked active)
+	// by CreateOrUpdateLifecycleRecord.
 	for _, cve := range sbomCVEs {
-		key := fmt.Sprintf("%s:%s", cve.CVEID, cve.Package)
-		currentCVEMap[key] = cve
-
-		// Determine if CVE was disclosed after deployment
 		disclosedAfter := !cve.Published.IsZero() && cve.Published.After(syncedAt)
 
 		err := lifecycle.CreateOrUpdateLifecycleRecord(
 			ctx, db,
-			endpointName,
-			releaseName,
-			releaseVersion,
-			cve,
-			syncedAt,
-			disclosedAfter,
+			endpointName, releaseName, releaseVersion,
+			cve, syncedAt, disclosedAfter,
 		)
-
 		if err != nil {
 			return fmt.Errorf("failed to create lifecycle record for %s: %w", cve.CVEID, err)
-		}
-	}
-
-	// Step 3: If not first deployment, compare versions and mark remediations
-	if !isFirstDeployment {
-		_, err := lifecycle.CompareAndMarkRemediations(
-			ctx, db,
-			endpointName, releaseName,
-			previousVersion, releaseVersion,
-			currentCVEMap,
-			syncedAt,
-		)
-
-		if err != nil {
-			return fmt.Errorf("failed to compare versions: %w", err)
 		}
 	}
 
@@ -433,56 +397,26 @@ func processRelease(ctx context.Context, db database.DBConnection, relSync model
 	return ReleaseResult{Name: release.Name, Version: cleanedVersion, Status: statusMsg, Message: "Release processed successfully"}
 }
 
-func batchFindOrCreatePURLs(ctx context.Context, db database.DBConnection, purls []string) (map[string]string, error) {
-	result := make(map[string]string)
-	for _, basePurl := range purls {
-		purlKey := util.SanitizeKey(basePurl)
-		purlNode := map[string]interface{}{"_key": purlKey, "purl": basePurl, "objtype": "PURL"}
-		db.Collections["purl"].CreateDocument(ctx, purlNode)
-		result[basePurl] = "purl/" + purlKey
+func processSBOMForRelease(ctx context.Context, db database.DBConnection, sbomData *model.SBOM, releaseID string) bool {
+	if sbomData.ObjType == "" {
+		sbomData.ObjType = "SBOM"
 	}
-	return result, nil
-}
+	_, sbomID, err := sbom.ProcessSBOM(ctx, db, *sbomData)
+	if err != nil {
+		return false
+	}
+	releases.DeleteRelease2SBOMEdges(ctx, db, releaseID)
+	edge := map[string]interface{}{"_from": releaseID, "_to": sbomID}
+	db.Collections["release2sbom"].CreateDocument(ctx, edge)
 
-func processSBOMComponentsWithFixedPURLs(ctx context.Context, db database.DBConnection, sbomData model.SBOM, sbomID string) error {
-	var sbomContent map[string]interface{}
-	json.Unmarshal(sbomData.Content, &sbomContent)
-	components, _ := sbomContent["components"].([]interface{})
-
-	var basePurls []string
-	var componentData []map[string]interface{}
-
-	for _, comp := range components {
-		compMap, _ := comp.(map[string]interface{})
-		purl, _ := compMap["purl"].(string)
-		cleaned, _ := util.CleanPURL(purl)
-		basePurl, _ := util.GetStandardBasePURL(cleaned)
-		componentData = append(componentData, map[string]interface{}{"basePurl": basePurl, "fullPurl": cleaned, "version": compMap["version"]})
-		basePurls = append(basePurls, basePurl)
+	// FIX: Use the exported SBOM package function instead of duplicated local logic
+	if err := sbom.ProcessSBOMComponents(ctx, db, *sbomData, sbomID); err != nil {
+		fmt.Printf("Error processing SBOM components: %v\n", err)
+		return false
 	}
 
-	purlMap, _ := batchFindOrCreatePURLs(ctx, db, basePurls)
-	for _, data := range componentData {
-		basePurl := data["basePurl"].(string)
-		purlDocID, exists := purlMap[basePurl]
-		if !exists {
-			continue
-		}
-		versionStr, _ := data["version"].(string)
-		parsed := util.ParseSemanticVersion(versionStr)
-		edge := map[string]interface{}{"_from": sbomID, "_to": purlDocID, "version": versionStr, "full_purl": data["fullPurl"]}
-		if parsed.Major != nil {
-			edge["version_major"] = *parsed.Major
-		}
-		if parsed.Minor != nil {
-			edge["version_minor"] = *parsed.Minor
-		}
-		if parsed.Patch != nil {
-			edge["version_patch"] = *parsed.Patch
-		}
-		db.Collections["sbom2purl"].CreateDocument(ctx, edge)
-	}
-	return nil
+	linkReleaseToExistingCVEs(ctx, db, releaseID, releaseID[8:])
+	return true
 }
 
 func linkReleaseToExistingCVEs(ctx context.Context, db database.DBConnection, releaseID, releaseKey string) error {
@@ -497,9 +431,8 @@ func linkReleaseToExistingCVEs(ctx context.Context, db database.DBConnection, re
 					FILTER purl != null
 					
 					FOR cveEdge IN cve2purl
-						FILTER cveEdge._to == purl._id  // ⭐ This already ensures PURL hub match
+						FILTER cveEdge._to == purl._id
 						
-						// Numeric pre-filter (same as before)
 						FILTER (
 							sbomEdge.version_major != null AND 
 							cveEdge.introduced_major != null AND 
@@ -532,17 +465,13 @@ func linkReleaseToExistingCVEs(ctx context.Context, db database.DBConnection, re
 						LET cve = DOCUMENT(cveEdge._from)
 						FILTER cve != null
 						
-						// ⭐ REMOVED: matchedAffected filter - not needed since cve2purl edge already validates PURL match
-						// The cve2purl edge only exists if the CVE affects this PURL
-						// So we can directly use cve.affected for Go validation fallback
-						
 						RETURN {
 							cve_id: cve._id,
 							cve_doc_id: cve.id,
 							package_purl_full: sbomEdge.full_purl,
 							package_purl_base: purl.purl,
 							package_version: sbomEdge.version,
-							all_affected: cve.affected,  // ⭐ Return all for Go validation
+							all_affected: cve.affected,
 							needs_validation: sbomEdge.version_major == null OR cveEdge.introduced_major == null
 						}
 	`
@@ -577,24 +506,18 @@ func linkReleaseToExistingCVEs(ctx context.Context, db database.DBConnection, re
 			continue
 		}
 
-		// Deduplication using base PURL
 		instanceKey := cand.CveID + ":" + cand.PackagePurlBase
 		if seenInstances[instanceKey] {
 			continue
 		}
 
-		// Validation fallback for non-numeric versions
 		if cand.NeedsValidation && len(cand.AllAffected) > 0 {
-			// Find the affected entry that matches this PURL
 			matchFound := false
 			for _, affected := range cand.AllAffected {
-				// ⭐ Use same standardization as hub creation
 				affectedPurl := ""
 				if affected.Package.Purl != "" {
-					// Use the PURL from OSV if available
 					affectedPurl = affected.Package.Purl
 				} else {
-					// Reconstruct using ecosystem mapping (same as GetBasePURLFromComponents)
 					ecosystem := string(affected.Package.Ecosystem)
 					namespace := affected.Package.Name
 					if strings.Contains(namespace, "/") {
@@ -606,13 +529,11 @@ func linkReleaseToExistingCVEs(ctx context.Context, db database.DBConnection, re
 					affectedPurl = util.GetBasePURLFromComponents(ecosystem, namespace, affected.Package.Name)
 				}
 
-				// Normalize to standard format
 				standardizedAffectedPurl, err := util.GetStandardBasePURL(affectedPurl)
 				if err != nil {
 					continue
 				}
 
-				// Check if this affected entry matches our package
 				if standardizedAffectedPurl == cand.PackagePurlBase {
 					if util.IsVersionAffected(cand.PackageVersion, affected) {
 						matchFound = true
@@ -644,22 +565,6 @@ func linkReleaseToExistingCVEs(ctx context.Context, db database.DBConnection, re
 	}
 
 	return nil
-}
-
-func processSBOMForRelease(ctx context.Context, db database.DBConnection, sbomData *model.SBOM, releaseID string) bool {
-	if sbomData.ObjType == "" {
-		sbomData.ObjType = "SBOM"
-	}
-	_, sbomID, err := sbom.ProcessSBOM(ctx, db, *sbomData)
-	if err != nil {
-		return false
-	}
-	releases.DeleteRelease2SBOMEdges(ctx, db, releaseID)
-	edge := map[string]interface{}{"_from": releaseID, "_to": sbomID}
-	db.Collections["release2sbom"].CreateDocument(ctx, edge)
-	processSBOMComponentsWithFixedPURLs(ctx, db, *sbomData, sbomID)
-	linkReleaseToExistingCVEs(ctx, db, releaseID, releaseID[8:])
-	return true
 }
 
 func createSyncRecords(ctx context.Context, db database.DBConnection, endpointName string,
