@@ -63,12 +63,14 @@ var SeverityMetricType = graphql.NewObject(graphql.ObjectConfig{
 var DashboardGlobalStatusType = graphql.NewObject(graphql.ObjectConfig{
 	Name: "DashboardGlobalStatus",
 	Fields: graphql.Fields{
-		"critical":    &graphql.Field{Type: SeverityMetricType},
-		"high":        &graphql.Field{Type: SeverityMetricType},
-		"medium":      &graphql.Field{Type: SeverityMetricType},
-		"low":         &graphql.Field{Type: SeverityMetricType},
-		"total_count": &graphql.Field{Type: graphql.Int},
-		"total_delta": &graphql.Field{Type: graphql.Int},
+		"critical":          &graphql.Field{Type: SeverityMetricType},
+		"high":              &graphql.Field{Type: SeverityMetricType},
+		"medium":            &graphql.Field{Type: SeverityMetricType},
+		"low":               &graphql.Field{Type: SeverityMetricType},
+		"total_count":       &graphql.Field{Type: graphql.Int},
+		"total_delta":       &graphql.Field{Type: graphql.Int},
+		"high_risk_backlog": &graphql.Field{Type: graphql.Int},
+		"high_risk_delta":   &graphql.Field{Type: graphql.Int},
 	},
 })
 

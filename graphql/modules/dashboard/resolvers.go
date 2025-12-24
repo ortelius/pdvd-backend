@@ -273,13 +273,24 @@ func ResolveDashboardGlobalStatus(db database.DBConnection, _ int) (map[string]i
 				RETURN { severity: sev_val, count: curr, delta: curr - prev }
 		)
 
+		// Calculate High-Risk Backlog (Critical + High)
+		LET critical_count = FIRST(FOR r IN combined FILTER r.severity == "critical" RETURN r.count) || 0
+		LET high_count = FIRST(FOR r IN combined FILTER r.severity == "high" RETURN r.count) || 0
+		LET high_risk_backlog = critical_count + high_count
+
+		LET critical_delta = FIRST(FOR r IN combined FILTER r.severity == "critical" RETURN r.delta) || 0
+		LET high_delta = FIRST(FOR r IN combined FILTER r.severity == "high" RETURN r.delta) || 0
+		LET high_risk_delta = critical_delta + high_delta
+
 		RETURN {
 			critical: FIRST(FOR r IN combined FILTER r.severity == "critical" RETURN { count: r.count, delta: r.delta }) || { count: 0, delta: 0 },
 			high: FIRST(FOR r IN combined FILTER r.severity == "high" RETURN { count: r.count, delta: r.delta }) || { count: 0, delta: 0 },
 			medium: FIRST(FOR r IN combined FILTER r.severity == "medium" RETURN { count: r.count, delta: r.delta }) || { count: 0, delta: 0 },
 			low: FIRST(FOR r IN combined FILTER r.severity == "low" RETURN { count: r.count, delta: r.delta }) || { count: 0, delta: 0 },
 			total_count: SUM(combined[*].count),
-			total_delta: SUM(combined[*].delta)
+			total_delta: SUM(combined[*].delta),
+			high_risk_backlog: high_risk_backlog,
+			high_risk_delta: high_risk_delta
 		}
 	`
 
