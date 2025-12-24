@@ -252,7 +252,6 @@ func CleanPURL(purlStr string) (string, error) {
 // GetBasePURL removes the version component from a PURL to create a base package identifier.
 // Used for matching CVE PURLs with SBOM component PURLs.
 // Example: pkg:apk/wolfi/glibc@2.42-r4 -> pkg:apk/wolfi/glibc
-// DEPRECATED: Use GetStandardBasePURL instead for consistency
 func GetBasePURL(purlStr string) (string, error) {
 	return GetStandardBasePURL(purlStr)
 }
@@ -282,19 +281,19 @@ func EcosystemToPurlType(ecosystem string) string {
 		"Debian":     "deb",
 		"Ubuntu":     "deb",
 	}
-	
+
 	// Try exact match first
 	if purlType, exists := mapping[ecosystem]; exists {
 		return purlType
 	}
-	
+
 	// Fallback: try case-insensitive
 	for key, value := range mapping {
 		if strings.EqualFold(key, ecosystem) {
 			return value
 		}
 	}
-	
+
 	// Last resort: return lowercase ecosystem
 	return strings.ToLower(ecosystem)
 }
@@ -304,7 +303,7 @@ func EcosystemToPurlType(ecosystem string) string {
 // Example: ("Wolfi", "wolfi", "glibc") -> "pkg:apk/wolfi/glibc"
 func GetBasePURLFromComponents(ecosystem, namespace, name string) string {
 	purlType := EcosystemToPurlType(ecosystem)
-	
+
 	// Build base PURL
 	var basePurl string
 	if namespace != "" {
@@ -312,7 +311,7 @@ func GetBasePURLFromComponents(ecosystem, namespace, name string) string {
 	} else {
 		basePurl = fmt.Sprintf("pkg:%s/%s", purlType, name)
 	}
-	
+
 	return strings.ToLower(basePurl)
 }
 
@@ -324,17 +323,17 @@ func GetStandardBasePURL(purlStr string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	
+
 	// Normalize the ecosystem using our mapping
 	normalizedType := EcosystemToPurlType(parsed.Type)
-	
+
 	base := packageurl.PackageURL{
 		Type:      normalizedType,
 		Namespace: parsed.Namespace,
 		Name:      parsed.Name,
 		// Version, Qualifiers, Subpath intentionally omitted
 	}
-	
+
 	return strings.ToLower(base.ToString()), nil
 }
 

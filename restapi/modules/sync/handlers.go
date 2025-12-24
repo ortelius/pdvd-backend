@@ -385,11 +385,13 @@ func processRelease(ctx context.Context, db database.DBConnection, relSync model
 	}
 
 	statusMsg := "updated"
-	if releaseCreated && sbomProcessed {
+
+	switch {
+	case releaseCreated && sbomProcessed:
 		statusMsg = "created_with_sbom"
-	} else if releaseCreated {
+	case releaseCreated:
 		statusMsg = "created"
-	} else if sbomProcessed {
+	case sbomProcessed:
 		statusMsg = "updated_with_sbom"
 	}
 

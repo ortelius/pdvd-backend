@@ -46,7 +46,7 @@ func CreateOrUpdateLifecycleRecord(
 	releaseVersion string,
 	cveInfo CVEInfo,
 	introducedAt time.Time,
-	disclosedAfter bool,
+	_ bool, // Renamed from disclosedAfter to _ to address revive linting error
 ) error {
 
 	if introducedAt.IsZero() {
@@ -178,6 +178,7 @@ func MarkCVERemediated(ctx context.Context, db database.DBConnection, endpointNa
 	return err
 }
 
+// GetPreviousVersion retrieves the version and sync time of the most recent sync for a release on an endpoint.
 func GetPreviousVersion(ctx context.Context, db database.DBConnection, releaseName, endpointName string, currentSyncTime time.Time) (string, time.Time, error) {
 	query := `FOR s IN sync FILTER s.release_name == @release_name AND s.endpoint_name == @endpoint_name AND DATE_TIMESTAMP(s.synced_at) < @current_time SORT DATE_TIMESTAMP(s.synced_at) DESC LIMIT 1 RETURN { version: s.release_version, synced_at: s.synced_at }`
 	cursor, err := db.Database.Query(ctx, query, &arangodb.QueryOptions{BindVars: map[string]interface{}{"release_name": releaseName, "endpoint_name": endpointName, "current_time": currentSyncTime.Unix() * 1000}})
@@ -193,6 +194,7 @@ func GetPreviousVersion(ctx context.Context, db database.DBConnection, releaseNa
 	return result.Version, result.SyncedAt, nil
 }
 
+// GetCVEsForReleaseTracking retrieves CVE information for a specific release to be used in lifecycle tracking.
 func GetCVEsForReleaseTracking(ctx context.Context, db database.DBConnection, releaseName, releaseVersion string) (map[string]CVEInfo, error) {
 	query := `FOR r IN release FILTER r.name == @name AND r.version == @version LIMIT 1 FOR cve, edge IN 1..1 OUTBOUND r release2cve RETURN { cve_id: cve.id, package: edge.package_base, severity_rating: cve.database_specific.severity_rating, severity_score: cve.database_specific.cvss_base_score, published: DATE_ISO8601(cve.published) }`
 	cursor, err := db.Database.Query(ctx, query, &arangodb.QueryOptions{BindVars: map[string]interface{}{"name": releaseName, "version": releaseVersion}})
