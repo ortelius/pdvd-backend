@@ -25,11 +25,12 @@ type DBConnection struct {
 	Database    arangodb.Database
 }
 
-// Define a struct to hold the index definition
+// indexConfig defines a struct to hold the index definition
 type indexConfig struct {
 	Collection string
 	IdxName    string
-	IdxField   string
+	IdxField   []string // Supported multiple fields for composite indexes
+	Unique     bool
 }
 
 var initDone = false          // has the data been initialized
@@ -91,6 +92,7 @@ func InitializeDatabase() DBConnection {
 	}
 
 	False := false
+	True := true
 	dbhost := GetEnvDefault("ARANGO_HOST", "localhost")
 	dbport := GetEnvDefault("ARANGO_PORT", "8529")
 	dbuser := GetEnvDefault("ARANGO_USER", "root")
@@ -103,13 +105,11 @@ func InitializeDatabase() DBConnection {
 	// Database connection with backoff retry
 	//
 
-	// Configure exponential backoff
 	bo := backoff.NewExponentialBackOff()
 	bo.InitialInterval = initialInterval
 	bo.MaxInterval = maxInterval
 	bo.MaxElapsedTime = 0 // Set to 0 for indefinite retries
 
-	// Retry logic
 	err := backoff.RetryNotify(func() error {
 		fmt.Println("Attempting to connect to ArangoDB")
 		endpoint := connection.NewRoundRobinEndpoints([]string{dburl})
@@ -118,7 +118,7 @@ func InitializeDatabase() DBConnection {
 		client = arangodb.NewClient(conn)
 
 		// Ask the version of the server
-		versionInfo, err := client.Version(context.Background())
+		versionInfo, err := client.Version(ctx)
 		if err != nil {
 			return err
 		}
@@ -127,7 +127,6 @@ func InitializeDatabase() DBConnection {
 		return nil
 
 	}, bo, func(err error, _ time.Duration) {
-		// Optionally, you can add a message here to be printed after each retry
 		fmt.Printf("Retrying connection to ArangoDB: %v\n", err)
 	})
 
@@ -165,8 +164,8 @@ func InitializeDatabase() DBConnection {
 	//
 
 	collections = make(map[string]arangodb.Collection)
-	// ADDED "users"
-	collectionNames := []string{"release", "sbom", "purl", "cve", "endpoint", "sync", "metadata", "cve_lifecycle", "users"}
+	// Added "users" and "invitations" for user management
+	collectionNames := []string{"release", "sbom", "purl", "cve", "endpoint", "sync", "metadata", "cve_lifecycle", "users", "invitations"}
 
 	for _, collectionName := range collectionNames {
 		var col arangodb.Collection
@@ -218,56 +217,29 @@ func InitializeDatabase() DBConnection {
 	//
 
 	idxList := []indexConfig{
-		// CVE collection indexes
-		{Collection: "cve", IdxName: "package_name", IdxField: "affected[*].package.name"},
-		{Collection: "cve", IdxName: "package_purl", IdxField: "affected[*].package.purl"},
-		{Collection: "cve", IdxName: "cve_osv_id", IdxField: "osv.id"},
-		{Collection: "cve", IdxName: "cve_id", IdxField: "id"},
-		{Collection: "cve", IdxName: "cve_severity_rating", IdxField: "database_specific.severity_rating"},
-		{Collection: "cve", IdxName: "cve_severity_score", IdxField: "database_specific.cvss_base_score"},
+		// Original CVE indexes
+		{Collection: "cve", IdxName: "package_name", IdxField: []string{"affected[*].package.name"}, Unique: false},
+		{Collection: "cve", IdxName: "package_purl", IdxField: []string{"affected[*].package.purl"}, Unique: false},
+		{Collection: "cve", IdxName: "cve_id", IdxField: []string{"id"}, Unique: false},
 
-		// SBOM collection indexes
-		{Collection: "sbom", IdxName: "sbom_contentsha", IdxField: "contentsha"},
+		// SBOM & Release indexes
+		{Collection: "sbom", IdxName: "sbom_contentsha", IdxField: []string{"contentsha"}, Unique: false},
+		{Collection: "release", IdxName: "release_contentsha", IdxField: []string{"contentsha"}, Unique: false},
 
-		// PURL collection indexes - unique index on base PURL
-		{Collection: "purl", IdxName: "purl_idx", IdxField: "purl"},
+		// PURL unique index
+		{Collection: "purl", IdxName: "purl_idx", IdxField: []string{"purl"}, Unique: true},
 
-		// Release collection indexes for composite key lookup (release deduplication)
-		{Collection: "release", IdxName: "release_name", IdxField: "name"},
-		{Collection: "release", IdxName: "release_version", IdxField: "version"},
-		{Collection: "release", IdxName: "release_contentsha", IdxField: "contentsha"},
+		// New User Management Indexes
+		{Collection: "users", IdxName: "users_username", IdxField: []string{"username"}, Unique: true},
+		{Collection: "users", IdxName: "users_email", IdxField: []string{"email"}, Unique: true},
+		{Collection: "invitations", IdxName: "idx_token", IdxField: []string{"token"}, Unique: true},
+		{Collection: "invitations", IdxName: "idx_invitation_username", IdxField: []string{"username"}, Unique: false},
+		{Collection: "invitations", IdxName: "idx_expires_at", IdxField: []string{"expires_at"}, Unique: false},
 
-		// Endpoint collection indexes
-		{Collection: "endpoint", IdxName: "endpoint_name", IdxField: "name"},
-		{Collection: "endpoint", IdxName: "endpoint_type", IdxField: "endpoint_type"},
-		{Collection: "endpoint", IdxName: "endpoint_environment", IdxField: "environment"},
-
-		// Sync collection indexes
-		{Collection: "sync", IdxName: "sync_release_name", IdxField: "release_name"},
-		{Collection: "sync", IdxName: "sync_release_version", IdxField: "release_version"},
-		{Collection: "sync", IdxName: "sync_endpoint_name", IdxField: "endpoint_name"},
-		{Collection: "sync", IdxName: "sync_synced_at", IdxField: "synced_at"},
-		{Collection: "sync", IdxName: "sync_release_version_major", IdxField: "release_version_major"},
-		{Collection: "sync", IdxName: "sync_release_version_minor", IdxField: "release_version_minor"},
-		{Collection: "sync", IdxName: "sync_release_version_patch", IdxField: "release_version_patch"},
-
-		// CVE Lifecycle collection indexes
-		{Collection: "cve_lifecycle", IdxName: "lifecycle_cve_id", IdxField: "cve_id"},
-		{Collection: "cve_lifecycle", IdxName: "lifecycle_endpoint", IdxField: "endpoint_name"},
-		{Collection: "cve_lifecycle", IdxName: "lifecycle_release", IdxField: "release_name"},
-		{Collection: "cve_lifecycle", IdxName: "lifecycle_package", IdxField: "package"},
-		{Collection: "cve_lifecycle", IdxName: "lifecycle_severity", IdxField: "severity_rating"},
-		{Collection: "cve_lifecycle", IdxName: "lifecycle_remediated", IdxField: "is_remediated"},
-		{Collection: "cve_lifecycle", IdxName: "lifecycle_introduced_at", IdxField: "introduced_at"},
-		{Collection: "cve_lifecycle", IdxName: "lifecycle_remediated_at", IdxField: "remediated_at"},
-		{Collection: "cve_lifecycle", IdxName: "lifecycle_disclosed_after", IdxField: "disclosed_after_deployment"},
-
-		// ADDED User collection index
-		{Collection: "users", IdxName: "users_username", IdxField: "username"},
+		// CVE Lifecycle indexes
+		{Collection: "cve_lifecycle", IdxName: "lifecycle_cve_id", IdxField: []string{"cve_id"}, Unique: false},
+		{Collection: "cve_lifecycle", IdxName: "lifecycle_remediated", IdxField: []string{"is_remediated"}, Unique: false},
 	}
-
-	// ... [Rest of the file remains the same, omitted for brevity but logic is preserved]
-	// Index creation loop and Edge indexes follow here ...
 
 	for _, idx := range idxList {
 		found := false
@@ -282,22 +254,23 @@ func InitializeDatabase() DBConnection {
 		}
 
 		if !found {
+			unique := False
+			if idx.Unique {
+				unique = True
+			}
 			indexOptions := arangodb.CreatePersistentIndexOptions{
-				Unique: &False,
+				Unique: &unique,
 				Sparse: &False,
 				Name:   idx.IdxName,
 			}
-			_, _, err = collections[idx.Collection].EnsurePersistentIndex(ctx, []string{idx.IdxField}, &indexOptions)
+			_, _, err = collections[idx.Collection].EnsurePersistentIndex(ctx, idx.IdxField, &indexOptions)
 			if err != nil {
 				logger.Sugar().Fatalln("Error creating index:", err)
 			} else {
-				logger.Sugar().Infof("Created index: %s on %s.%s", idx.IdxName, idx.Collection, idx.IdxField)
+				logger.Sugar().Infof("Created index: %s on %s.%v", idx.IdxName, idx.Collection, idx.IdxField)
 			}
 		}
 	}
-
-	// ... [Edge indexes and composite indexes omitted for brevity] ...
-	// Ensure you keep the existing complex index creation logic from your original file
 
 	initDone = true
 
@@ -311,7 +284,7 @@ func InitializeDatabase() DBConnection {
 	return dbConnection
 }
 
-// FindReleaseByCompositeKey and FindSBOMByContentHash helper functions remain unchanged
+// FindReleaseByCompositeKey retrieves a release key based on unique identifiers
 func FindReleaseByCompositeKey(ctx context.Context, db arangodb.Database, name, version, contentSha string) (string, error) {
 	query := `
 		FOR r IN release
@@ -347,8 +320,7 @@ func FindReleaseByCompositeKey(ctx context.Context, db arangodb.Database, name, 
 	return "", nil
 }
 
-// FindSBOMByContentHash retrieves an SBOM document from the database by its content hash.
-// Returns the SBOM if found, or nil if no matching hash exists.
+// FindSBOMByContentHash retrieves an SBOM document from the database by its content hash
 func FindSBOMByContentHash(ctx context.Context, db arangodb.Database, contentHash string) (string, error) {
 	query := `
 		FOR s IN sbom

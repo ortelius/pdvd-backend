@@ -1,0 +1,55 @@
+# RBAC Configuration - Infrastructure as Code
+# This file defines all user access control for the PDVD system
+# Changes to this file should go through PR review
+
+users:
+  - username: admin
+    email: admin@deployhub.com
+    role: admin
+    is_active: true
+    auth_provider: local
+    
+  - username: jane.smith
+    email: jane.smith@deployhub.com
+    role: viewer
+    is_active: true
+    auth_provider: local
+    # PLACEMENT: Moved to first non-admin position to ensure end-to-end 
+    # test scripts can correctly test the invitation/activation flow.
+    
+  - username: john.doe
+    email: john.doe@deployhub.com
+    role: editor
+    is_active: true
+    auth_provider: oidc
+    external_id: "github:12345"
+    
+  - username: scanner-bot
+    email: scanner@deployhub.com
+    role: editor
+    is_active: true
+    auth_provider: local
+    # Will receive invitation email at scanner@deployhub.com
+
+# Role definitions (for documentation and validation)
+# These roles are validated against the supported set: admin, editor, viewer
+roles:
+  admin:
+    description: "Full system access including RBAC management"
+    permissions:
+      - "read:*"
+      - "write:*"
+      - "admin:*"
+      
+  editor:
+    description: "Can create and modify releases, SBOMs, and sync data"
+    permissions:
+      - "read:*"
+      - "write:releases"
+      - "write:sbom"
+      - "write:sync"
+      
+  viewer:
+    description: "Read-only access to all data"
+    permissions:
+      - "read:*"
