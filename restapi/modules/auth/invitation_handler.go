@@ -53,7 +53,7 @@ func AcceptInvitationHandler(db database.DBConnection) fiber.Handler {
 		}
 
 		// Immediate login after successful activation
-		jwtToken, err := GenerateJWT(user.Username, user.Role)
+		jwtToken, err := GenerateJWT(user.Username, user.Role, user.Orgs)
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Login failed"})
 		}

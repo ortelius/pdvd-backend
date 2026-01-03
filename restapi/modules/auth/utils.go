@@ -1,57 +1,82 @@
-// Package auth provides authentication and authorization types for the REST API.
+// Package auth provides authentication and authorization utilities.
+//
+//revive:disable-next-line:var-naming
 package auth
 
 import (
 	"crypto/rand"
 	"encoding/base64"
-	"errors"
-	"os"
+	"fmt"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 )
 
-var jwtSecret = []byte(os.Getenv("JWT_SECRET"))
+// JWT secret key - should be loaded from environment variable in production
+var jwtSecret = []byte("your-secret-key-change-this-in-production")
 
-func init() {
-	if len(jwtSecret) == 0 {
-		// Fallback for dev/bootstrap if env not set
-		// In production, this should ideally log a fatal error or block startup
-		jwtSecret = []byte("unsafe-default-secret-change-me")
-	}
-}
+// ============================================================================
+// PASSWORD HASHING
+// ============================================================================
 
-// HashPassword generates a bcrypt hash
+// HashPassword generates a bcrypt hash of the password
 func HashPassword(password string) (string, error) {
-	bytes, err := bcrypt.GenerateFromPassword([]byte(password), 14)
+	bytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	return string(bytes), err
 }
 
-// CheckPasswordHash compares password with hash
+// CheckPasswordHash compares a password with a hash
 func CheckPasswordHash(password, hash string) bool {
 	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
 	return err == nil
 }
 
-// GenerateJWT creates a signed token for the user
-func GenerateJWT(username, role string) (string, error) {
-	claims := jwt.MapClaims{
-		"sub":  username,
-		"role": role,
-		"exp":  time.Now().Add(time.Hour * 24).Unix(), // 24 hour session
-		"iat":  time.Now().Unix(),
+// ============================================================================
+// JWT TOKEN MANAGEMENT
+// ============================================================================
+
+// Claims represents JWT claims
+type Claims struct {
+	Username string   `json:"username"`
+	Role     string   `json:"role"`
+	Orgs     []string `json:"orgs,omitempty"` // NEW: Org-scoped access
+	jwt.RegisteredClaims
+}
+
+// GenerateJWT generates a JWT token for a user
+func GenerateJWT(username, role string, orgs []string) (string, error) {
+	expirationTime := time.Now().Add(24 * time.Hour) // 24 hour expiry
+
+	claims := &Claims{
+		Username: username,
+		Role:     role,
+		Orgs:     orgs, // Include org scope in token
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(expirationTime),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			Issuer:    "pdvd-backend",
+			Subject:   username,
+		},
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(jwtSecret)
+	tokenString, err := token.SignedString(jwtSecret)
+	if err != nil {
+		return "", err
+	}
+
+	return tokenString, nil
 }
 
-// ValidateJWT parses and validates the token
-func ValidateJWT(tokenString string) (jwt.MapClaims, error) {
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+// ValidateJWT validates a JWT token and returns the claims
+func ValidateJWT(tokenString string) (*Claims, error) {
+	claims := &Claims{}
+
+	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+		// Verify signing method
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, errors.New("unexpected signing method")
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
 		return jwtSecret, nil
 	})
@@ -60,19 +85,80 @@ func ValidateJWT(tokenString string) (jwt.MapClaims, error) {
 		return nil, err
 	}
 
-	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
-		return claims, nil
+	if !token.Valid {
+		return nil, fmt.Errorf("invalid token")
 	}
 
-	return nil, errors.New("invalid token")
+	return claims, nil
 }
 
-// GenerateRandomString creates a secure random string for the bootstrap token
-func GenerateRandomString(n int) (string, error) {
-	b := make([]byte, n)
-	_, err := rand.Read(b)
+// RefreshJWT generates a new token with extended expiration for an existing valid token
+func RefreshJWT(oldTokenString string) (string, error) {
+	claims, err := ValidateJWT(oldTokenString)
 	if err != nil {
+		return "", fmt.Errorf("cannot refresh invalid token: %w", err)
+	}
+
+	// Generate new token with same claims but fresh expiration
+	return GenerateJWT(claims.Username, claims.Role, claims.Orgs)
+}
+
+// ============================================================================
+// TOKEN GENERATION
+// ============================================================================
+
+// GenerateSecureToken generates a cryptographically secure random token
+// Used for invitation tokens, password reset tokens, etc.
+func GenerateSecureToken(length int) (string, error) {
+	if length <= 0 {
+		length = 32 // Default to 32 bytes
+	}
+
+	bytes := make([]byte, length)
+	if _, err := rand.Read(bytes); err != nil {
 		return "", err
 	}
-	return base64.URLEncoding.EncodeToString(b), nil
+
+	return base64.URLEncoding.EncodeToString(bytes), nil
+}
+
+// ============================================================================
+// CONFIGURATION
+// ============================================================================
+
+// SetJWTSecret sets the JWT secret (call this on startup with env var)
+func SetJWTSecret(secret string) {
+	if secret == "" {
+		panic("JWT secret cannot be empty")
+	}
+	jwtSecret = []byte(secret)
+}
+
+// GetJWTExpirationTime returns the configured JWT expiration duration
+func GetJWTExpirationTime() time.Duration {
+	return 24 * time.Hour
+}
+
+// ============================================================================
+// VALIDATION HELPERS
+// ============================================================================
+
+// IsStrongPassword validates password strength
+// Requires at least 8 characters
+func IsStrongPassword(password string) bool {
+	return len(password) >= 8
+}
+
+// ValidatePasswordStrength validates password meets security requirements
+// Returns error with specific requirement that failed
+func ValidatePasswordStrength(password string) error {
+	if len(password) < 8 {
+		return fmt.Errorf("password must be at least 8 characters long")
+	}
+	// Add more rules as needed:
+	// - Must contain uppercase
+	// - Must contain lowercase
+	// - Must contain number
+	// - Must contain special character
+	return nil
 }

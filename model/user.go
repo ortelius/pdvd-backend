@@ -12,25 +12,13 @@ type User struct {
 	Email        string    `json:"email"`
 	PasswordHash string    `json:"password_hash,omitempty"`
 	Role         string    `json:"role"` // admin, editor, viewer
+	Orgs         []string  `json:"orgs"` // NEW: List of orgs user can access
 	IsActive     bool      `json:"is_active"`
-	Status       string    `json:"status"` // pending, active, inactive
-	AuthProvider string    `json:"auth_provider"` // local, oidc
+	Status       string    `json:"status"`                // pending, active, inactive
+	AuthProvider string    `json:"auth_provider"`         // local, oidc
 	ExternalID   string    `json:"external_id,omitempty"` // For OIDC
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
-}
-
-// Invitation represents a user invitation
-type Invitation struct {
-	Key        string    `json:"_key,omitempty"`
-	Username   string    `json:"username"`
-	Email      string    `json:"email"`
-	Token      string    `json:"token"` // Secure random token
-	Role       string    `json:"role"`
-	ExpiresAt  time.Time `json:"expires_at"`
-	AcceptedAt *time.Time `json:"accepted_at,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
-	ResendCount int      `json:"resend_count"`
 }
 
 // NewUser creates a new user with default values
@@ -39,12 +27,92 @@ func NewUser(username, role string) *User {
 	return &User{
 		Username:     username,
 		Role:         role,
+		Orgs:         []string{}, // NEW: Empty by default (global access)
 		IsActive:     true,
 		Status:       "pending", // Default to pending until invitation accepted
 		AuthProvider: "local",
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
+}
+
+// HasOrgAccess checks if user has access to a specific org
+// NEW HELPER METHOD
+func (u *User) HasOrgAccess(org string) bool {
+	// Empty orgs = global access
+	if len(u.Orgs) == 0 {
+		return true
+	}
+
+	// Check if org is in user's list
+	for _, userOrg := range u.Orgs {
+		if userOrg == org {
+			return true
+		}
+	}
+
+	return false
+}
+
+// GetOrgFilter returns AQL filter clause for org-scoped queries
+// NEW HELPER METHOD
+// alias is the document alias in the AQL query (e.g., "r" for "FOR r IN release")
+func (u *User) GetOrgFilter(alias string) string {
+	// No orgs = global access, no filter needed
+	if len(u.Orgs) == 0 {
+		return ""
+	}
+
+	// Return filter to restrict to user's orgs
+	return " AND " + alias + ".org IN @userOrgs"
+}
+
+// HasPermission checks if user has a specific permission
+func (u *User) HasPermission(permission string) bool {
+	switch u.Role {
+	case "admin":
+		return true // Admin has all permissions
+	case "editor":
+		// Editor has read and write
+		if permission == "read" || permission == "write" {
+			return true
+		}
+	case "viewer":
+		// Viewer has read only
+		if permission == "read" {
+			return true
+		}
+	}
+
+	return false
+}
+
+// IsAdmin returns true if user is admin
+func (u *User) IsAdmin() bool {
+	return u.Role == "admin"
+}
+
+// CanWrite returns true if user can write
+func (u *User) CanWrite() bool {
+	return u.Role == "admin" || u.Role == "editor"
+}
+
+// CanRead returns true if user can read
+func (u *User) CanRead() bool {
+	return u.Role == "admin" || u.Role == "editor" || u.Role == "viewer"
+}
+
+// Invitation represents a user invitation (keeping existing code)
+type Invitation struct {
+	Key         string     `json:"_key,omitempty"`
+	Username    string     `json:"username"`
+	Email       string     `json:"email"`
+	Token       string     `json:"token"` // Secure random token
+	Role        string     `json:"role"`
+	ExpiresAt   time.Time  `json:"expires_at"`
+	AcceptedAt  *time.Time `json:"accepted_at,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	ResendCount int        `json:"resend_count"`
 }
 
 // NewInvitation creates a new invitation

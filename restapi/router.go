@@ -4,6 +4,7 @@ package restapi
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"time"
 
@@ -16,43 +17,82 @@ import (
 
 // SetupRoutes configures all REST API routes
 func SetupRoutes(app *fiber.App, db database.DBConnection) {
+	// Bootstrap admin user on startup (only runs if no users exist)
+	go func() {
+		if err := auth.BootstrapAdmin(db); err != nil {
+			log.Printf("WARNING: Failed to bootstrap admin: %v", err)
+		}
+	}()
+
+	// Ensure default roles exist
+	go func() {
+		if err := auth.EnsureDefaultRoles(db); err != nil {
+			log.Printf("WARNING: Failed to ensure default roles: %v", err)
+		}
+	}()
+
 	// Load email configuration for invitations
 	emailConfig := auth.LoadEmailConfig()
 
-	// 1. Run Background Logic
-	go auth.BootstrapAdmin(db)                 // Checks for admin, creates if missing
-	go autoApplyRBACOnStartup(db, emailConfig) // Applies RBAC from disk
-	go startInvitationCleanup(db)              // Periodically cleans up expired invites
+	// Auto-apply RBAC from disk if configured
+	go autoApplyRBACOnStartup(db, emailConfig)
+
+	// Start background cleanup of expired invitations
+	go startInvitationCleanup(db)
 
 	// API group
 	api := app.Group("/api/v1")
 
-	// 2. Auth Endpoints (Public)
+	// ========================================================================
+	// AUTH ENDPOINTS (Public)
+	// ========================================================================
 	authGroup := api.Group("/auth")
 	authGroup.Post("/login", auth.Login(db))
 	authGroup.Post("/logout", auth.Logout)
 	authGroup.Get("/me", auth.Me)
 	authGroup.Post("/forgot-password", auth.ForgotPassword(db))
+	authGroup.Post("/change-password", auth.ChangePassword(db))
+	authGroup.Post("/refresh", auth.RefreshToken(db))
 
-	// 3. Invitation Endpoints (Public)
+	// ========================================================================
+	// INVITATION ENDPOINTS (Public)
+	// ========================================================================
 	invitationGroup := api.Group("/invitation")
 	invitationGroup.Get("/:token", auth.GetInvitationHandler(db))
 	invitationGroup.Post("/:token/accept", auth.AcceptInvitationHandler(db))
 	invitationGroup.Post("/:token/resend", auth.ResendInvitationHandler(db, emailConfig))
 
-	// Release endpoints (Supports both guest and authenticated calls)
-	api.Post("/releases", auth.OptionalAuth, releases.PostReleaseWithSBOM(db))
+	// ========================================================================
+	// USER MANAGEMENT ENDPOINTS (Admin only)
+	// ========================================================================
+	userGroup := api.Group("/users", auth.RequireAuth, auth.RequireRole("admin"))
+	userGroup.Get("/", auth.ListUsers(db))
+	userGroup.Post("/", auth.CreateUser(db))
+	userGroup.Get("/:username", auth.GetUser(db))
+	userGroup.Put("/:username", auth.UpdateUser(db))
+	userGroup.Delete("/:username", auth.DeleteUser(db))
 
-	// Sync endpoints (Supports both guest and authenticated calls)
-	api.Post("/sync", auth.OptionalAuth, sync.PostSyncWithEndpoint(db))
-
-	// 4. RBAC Management Endpoints (Admin Only)
+	// ========================================================================
+	// RBAC MANAGEMENT ENDPOINTS (Admin only)
+	// ========================================================================
 	rbac := api.Group("/rbac", auth.RequireAuth, auth.RequireRole("admin"))
 	rbac.Post("/apply/content", auth.ApplyRBACFromBody(db, emailConfig))
 	rbac.Post("/apply/upload", auth.ApplyRBACFromUpload(db, emailConfig))
 	rbac.Post("/apply", auth.ApplyRBACFromFile(db, emailConfig))
 	rbac.Get("/config", auth.GetRBACConfig(db))
 	rbac.Get("/invitations", auth.ListPendingInvitationsHandler(db))
+
+	// ========================================================================
+	// RELEASE ENDPOINTS (Supports both guest and authenticated calls)
+	// ========================================================================
+	api.Post("/releases", auth.OptionalAuth, releases.PostReleaseWithSBOM(db))
+
+	// ========================================================================
+	// SYNC ENDPOINTS (Supports both guest and authenticated calls)
+	// ========================================================================
+	api.Post("/sync", auth.OptionalAuth, sync.PostSyncWithEndpoint(db))
+
+	log.Println("API routes initialized successfully")
 }
 
 // startInvitationCleanup runs a background ticker to remove expired invitations

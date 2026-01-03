@@ -22,8 +22,9 @@ func RequireAuth(c *fiber.Ctx) error {
 
 	// Store user info in context
 	c.Locals("is_authenticated", true)
-	c.Locals("username", claims["sub"].(string))
-	c.Locals("role", claims["role"].(string))
+	c.Locals("username", claims.Username)
+	c.Locals("role", claims.Role)
+	c.Locals("orgs", claims.Orgs)
 
 	return c.Next()
 }
@@ -46,8 +47,9 @@ func OptionalAuth(c *fiber.Ctx) error {
 
 	// User is authenticated; set context for handlers
 	c.Locals("is_authenticated", true)
-	c.Locals("username", claims["sub"].(string))
-	c.Locals("role", claims["role"].(string))
+	c.Locals("username", claims.Username)
+	c.Locals("role", claims.Role)
+	c.Locals("orgs", claims.Orgs)
 
 	return c.Next()
 }

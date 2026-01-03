@@ -164,7 +164,7 @@ func ResendInvitation(ctx context.Context, db database.DBConnection, emailConfig
 	// Update resend count and expiry
 	now := time.Now()
 	newExpiry := now.Add(48 * time.Hour)
-	
+
 	query := `
 		FOR i IN invitations 
 		FILTER i.token == @token 
@@ -191,30 +191,6 @@ func ResendInvitation(ctx context.Context, db database.DBConnection, emailConfig
 	fmt.Printf("✅ Resent invitation to %s (count: %d)\n", invitation.Email, invitation.ResendCount+1)
 
 	return nil
-}
-
-// getUserByUsername retrieves a user by username
-func getUserByUsername(ctx context.Context, db database.DBConnection, username string) (*model.User, error) {
-	query := `FOR u IN users FILTER u.username == @username RETURN u`
-	cursor, err := db.Database.Query(ctx, query, &arangodb.QueryOptions{
-		BindVars: map[string]interface{}{"username": username},
-	})
-	if err != nil {
-		return nil, err
-	}
-	defer cursor.Close()
-
-	if !cursor.HasMore() {
-		return nil, fmt.Errorf("user not found")
-	}
-
-	var user model.User
-	_, err = cursor.ReadDocument(ctx, &user)
-	if err != nil {
-		return nil, err
-	}
-
-	return &user, nil
 }
 
 // CleanupExpiredInvitations removes expired invitations
