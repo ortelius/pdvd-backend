@@ -67,6 +67,26 @@ var AffectedReleaseType = graphql.NewObject(graphql.ObjectConfig{
 	},
 })
 
+// OrgAggregatedReleaseType represents releases aggregated by organization
+var OrgAggregatedReleaseType = graphql.NewObject(graphql.ObjectConfig{
+	Name: "OrgAggregatedRelease",
+	Fields: graphql.Fields{
+		"org_name":                  &graphql.Field{Type: graphql.String},
+		"total_releases":            &graphql.Field{Type: graphql.Int},
+		"total_versions":            &graphql.Field{Type: graphql.Int},
+		"total_vulnerabilities":     &graphql.Field{Type: graphql.Int},
+		"critical_count":            &graphql.Field{Type: graphql.Int},
+		"high_count":                &graphql.Field{Type: graphql.Int},
+		"medium_count":              &graphql.Field{Type: graphql.Int},
+		"low_count":                 &graphql.Field{Type: graphql.Int},
+		"max_severity_score":        &graphql.Field{Type: graphql.Float},
+		"avg_scorecard_score":       &graphql.Field{Type: graphql.Float},
+		"total_dependencies":        &graphql.Field{Type: graphql.Int},
+		"synced_endpoint_count":     &graphql.Field{Type: graphql.Int},
+		"vulnerability_count_delta": &graphql.Field{Type: graphql.Int},
+	},
+})
+
 // GetReleaseType returns the ReleaseType with proper circular dependency handling
 func GetReleaseType(db database.DBConnection, vulnerabilityType *graphql.Object, affectedEndpointType *graphql.Object, scorecardResultType *graphql.Object) *graphql.Object {
 	return graphql.NewObject(graphql.ObjectConfig{
