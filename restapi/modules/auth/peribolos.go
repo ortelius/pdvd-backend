@@ -16,10 +16,6 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-// ============================================================================
-// RBAC CONFIGURATION STRUCTURES
-// ============================================================================
-
 // RBACConfig represents the top-level RBAC configuration
 type RBACConfig struct {
 	Users []UserConfig `yaml:"users"`
@@ -46,10 +42,6 @@ type RoleConfig struct {
 	Description string   `yaml:"description,omitempty"`
 }
 
-// ============================================================================
-// CONFIG LOADING
-// ============================================================================
-
 // LoadRBACConfig loads RBAC configuration from a YAML file
 func LoadRBACConfig(filepath string) (*RBACConfig, error) {
 	data, err := os.ReadFile(filepath)
@@ -74,10 +66,6 @@ func LoadRBACConfigFromString(yamlContent string) (*RBACConfig, error) {
 
 	return &config, nil
 }
-
-// ============================================================================
-// CONFIG VALIDATION
-// ============================================================================
 
 // ValidateRBACConfig validates the RBAC configuration
 func ValidateRBACConfig(config *RBACConfig) error {
@@ -157,10 +145,6 @@ func ValidateRBACConfig(config *RBACConfig) error {
 	return nil
 }
 
-// ============================================================================
-// CONFIG APPLICATION
-// ============================================================================
-
 // ApplyRBACConfig applies the RBAC configuration to the database
 func ApplyRBACConfig(db database.DBConnection, config *RBACConfig) (int, int, int, []error) {
 	var errors []error
@@ -207,10 +191,6 @@ func ApplyRBACConfigFromFile(db database.DBConnection, filepath string) (int, in
 	return ApplyRBACConfig(db, config)
 }
 
-// ============================================================================
-// DATABASE OPERATIONS
-// ============================================================================
-
 // upsertUser creates or updates a user in the database
 func upsertUser(db database.DBConnection, userConfig *UserConfig) (bool, error) {
 	ctx := context.Background()
@@ -221,17 +201,18 @@ func upsertUser(db database.DBConnection, userConfig *UserConfig) (bool, error) 
 	now := time.Now()
 
 	var passwordHash string
-	if userConfig.PasswordHash != "" {
+	switch {
+	case userConfig.PasswordHash != "":
 		passwordHash = userConfig.PasswordHash
-	} else if userConfig.Password != "" {
+	case userConfig.Password != "":
 		hash, err := HashPassword(userConfig.Password)
 		if err != nil {
 			return false, fmt.Errorf("failed to hash password: %w", err)
 		}
 		passwordHash = hash
-	} else if userExists {
+	case userExists:
 		passwordHash = existingUser.PasswordHash
-	} else {
+	default:
 		randomPass, err := GenerateSecureToken(32)
 		if err != nil {
 			return false, fmt.Errorf("failed to generate random password: %w", err)
@@ -362,10 +343,6 @@ func upsertRole(db database.DBConnection, roleConfig *RoleConfig) error {
 	return err
 }
 
-// ============================================================================
-// EXPORT FUNCTIONS
-// ============================================================================
-
 // ExportRBACConfig exports the current RBAC configuration to YAML
 func ExportRBACConfig(db database.DBConnection) (*RBACConfig, error) {
 	ctx := context.Background()
@@ -452,10 +429,6 @@ func ExportRBACConfigToFile(db database.DBConnection, filepath string) error {
 
 	return nil
 }
-
-// ============================================================================
-// BOOTSTRAP FUNCTIONS
-// ============================================================================
 
 // BootstrapAdmin creates a default admin user if no users exist in the database
 func BootstrapAdmin(db database.DBConnection) error {
@@ -560,10 +533,6 @@ func EnsureDefaultRoles(db database.DBConnection) error {
 	fmt.Println("Default roles ensured: admin, editor, viewer")
 	return nil
 }
-
-// ============================================================================
-// HELPER FUNCTIONS
-// ============================================================================
 
 // SyncRBACFromFile is a convenience function that combines load, validate, and apply
 func SyncRBACFromFile(db database.DBConnection, filepath string) error {

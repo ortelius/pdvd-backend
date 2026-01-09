@@ -112,7 +112,7 @@ Valid for: 1 hour
 	}
 
 	resetLink := fmt.Sprintf("%s/reset-password/%s", config.BaseURL, token)
-	
+
 	subject := "Reset your PDVD password"
 	body := fmt.Sprintf(`
 <html>

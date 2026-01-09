@@ -1,3 +1,4 @@
+// Package auth provides authentication and authorization middleware for Fiber applications.
 package auth
 
 import (

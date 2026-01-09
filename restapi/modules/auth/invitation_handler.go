@@ -1,3 +1,4 @@
+// Package auth provides invitation management handlers for user onboarding.
 package auth
 
 import (

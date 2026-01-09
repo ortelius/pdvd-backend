@@ -48,8 +48,8 @@ func SetupRoutes(app *fiber.App, db database.DBConnection) {
 	// ========================================================================
 	authGroup := api.Group("/auth")
 	authGroup.Post("/login", auth.Login(db))
-	authGroup.Post("/logout", auth.Logout)
-	authGroup.Get("/me", auth.Me)
+	authGroup.Post("/logout", auth.Logout())
+	authGroup.Get("/me", auth.Me())
 	authGroup.Post("/forgot-password", auth.ForgotPassword(db))
 	authGroup.Post("/change-password", auth.ChangePassword(db))
 	authGroup.Post("/refresh", auth.RefreshToken(db))

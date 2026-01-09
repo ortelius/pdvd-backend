@@ -1,3 +1,4 @@
+// Package model defines the data structures for organization management in the PDVD system.
 package model
 
 import "time"

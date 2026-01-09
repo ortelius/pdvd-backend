@@ -16,10 +16,6 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-// ============================================================================
-// RBAC HANDLERS (Fiber)
-// ============================================================================
-
 // ApplyRBACFromBody applies RBAC config from request body (YAML only)
 func ApplyRBACFromBody(db database.DBConnection, emailConfig *EmailConfig) fiber.Handler {
 	return func(c *fiber.Ctx) error {
@@ -215,16 +211,14 @@ func GetRBACConfig(db database.DBConnection) fiber.Handler {
 	}
 }
 
-// ============================================================================
-// RBAC LOGIC
-// ============================================================================
-
+// PeriobolosConfig represents the RBAC configuration structure compatible with Peribolos-style YAML
 type PeriobolosConfig struct {
 	Orgs  []OrgDefinition  `yaml:"orgs,omitempty"`
 	Users []PeriobolosUser `yaml:"users"`
 	Roles []RoleDefinition `yaml:"roles,omitempty"`
 }
 
+// OrgDefinition represents an organization configuration
 type OrgDefinition struct {
 	Name        string            `yaml:"name"`
 	DisplayName string            `yaml:"display_name,omitempty"`
@@ -232,6 +226,7 @@ type OrgDefinition struct {
 	Metadata    map[string]string `yaml:"metadata,omitempty"`
 }
 
+// PeriobolosUser represents a user configuration in the RBAC system
 type PeriobolosUser struct {
 	Username     string   `yaml:"username"`
 	Email        string   `yaml:"email"`
@@ -240,12 +235,14 @@ type PeriobolosUser struct {
 	AuthProvider string   `yaml:"auth_provider,omitempty"`
 }
 
+// RoleDefinition represents a role configuration with associated permissions
 type RoleDefinition struct {
 	Name        string   `yaml:"name"`
 	Description string   `yaml:"description,omitempty"`
 	Permissions []string `yaml:"permissions,omitempty"`
 }
 
+// RBACResult contains the outcome of applying RBAC configuration
 type RBACResult struct {
 	OrgsCreated []string          `json:"orgs_created"`
 	OrgsUpdated []string          `json:"orgs_updated"`
@@ -256,6 +253,7 @@ type RBACResult struct {
 	Invitations map[string]string `json:"invitations,omitempty"`
 }
 
+// LoadPeriobolosConfig parses RBAC configuration from YAML content
 func LoadPeriobolosConfig(yamlContent string) (*PeriobolosConfig, error) {
 	var config PeriobolosConfig
 	if err := yaml.Unmarshal([]byte(yamlContent), &config); err != nil {
@@ -309,18 +307,16 @@ func ApplyRBAC(db database.DBConnection, config *PeriobolosConfig, emailConfig *
 				return nil, fmt.Errorf("failed to create org %s: %w", orgDef.Name, err)
 			}
 			result.OrgsCreated = append(result.OrgsCreated, orgDef.Name)
-		} else {
+		} else if existingOrg.DisplayName != orgDef.DisplayName || existingOrg.Description != orgDef.Description {
 			// Found - Update display info if changed
-			if existingOrg.DisplayName != orgDef.DisplayName || existingOrg.Description != orgDef.Description {
-				existingOrg.DisplayName = orgDef.DisplayName
-				existingOrg.Description = orgDef.Description
-				existingOrg.Metadata = orgDef.Metadata
-				existingOrg.UpdatedAt = time.Now()
-				if err := updateOrg(ctx, db, existingOrg); err != nil {
-					return nil, fmt.Errorf("failed to update org %s: %w", orgDef.Name, err)
-				}
-				result.OrgsUpdated = append(result.OrgsUpdated, orgDef.Name)
+			existingOrg.DisplayName = orgDef.DisplayName
+			existingOrg.Description = orgDef.Description
+			existingOrg.Metadata = orgDef.Metadata
+			existingOrg.UpdatedAt = time.Now()
+			if err := updateOrg(ctx, db, existingOrg); err != nil {
+				return nil, fmt.Errorf("failed to update org %s: %w", orgDef.Name, err)
 			}
+			result.OrgsUpdated = append(result.OrgsUpdated, orgDef.Name)
 		}
 	}
 
@@ -330,13 +326,13 @@ func ApplyRBAC(db database.DBConnection, config *PeriobolosConfig, emailConfig *
 			// Ensure org exists in either YAML definition or current Database
 			if !orgMapInYAML[orgName] {
 				if _, err := getOrgByName(ctx, db, orgName); err != nil {
-					return nil, fmt.Errorf("User %s references undefined org: %s", configUser.Username, orgName)
+					return nil, fmt.Errorf("user %s references undefined org: %s", configUser.Username, orgName)
 				}
 			}
 		}
 	}
 
-	// 3. Source-of-Truth Sync for Users (Uses helpers from handlers.go)
+	// 3. Source-of-Truth Sync for Users
 	existingUsers, err := listUsers(ctx, db)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list users: %w", err)
@@ -412,10 +408,6 @@ func stringSlicesEqual(a, b []string) bool {
 	return true
 }
 
-// ============================================================================
-// DATABASE HELPER FUNCTIONS (Corrected for ArangoDB v2)
-// ============================================================================
-
 func getOrgByName(ctx context.Context, db database.DBConnection, name string) (*model.Org, error) {
 	query := `FOR org IN orgs FILTER org.name == @name RETURN org`
 	cursor, err := db.Database.Query(ctx, query, &arangodb.QueryOptions{
@@ -435,7 +427,6 @@ func getOrgByName(ctx context.Context, db database.DBConnection, name string) (*
 }
 
 func createOrg(ctx context.Context, db database.DBConnection, org *model.Org) error {
-	// Access via db.Collections map initialized in database.go
 	_, err := db.Collections["orgs"].CreateDocument(ctx, org)
 	return err
 }

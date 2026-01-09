@@ -1,3 +1,4 @@
+---
 services:
   arangodb:
     image: arangodb:3.12@sha256:9dde57a0f67ead277d5d31f3117051334d3452dd3b0847baea2e512427150028

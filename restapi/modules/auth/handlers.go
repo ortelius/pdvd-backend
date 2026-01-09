@@ -70,32 +70,36 @@ func Login(db database.DBConnection) fiber.Handler {
 }
 
 // Logout clears the auth cookie
-func Logout(c *fiber.Ctx) error {
-	c.ClearCookie("auth_token")
-	return c.JSON(fiber.Map{
-		"message": "Logged out successfully",
-	})
+func Logout() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		c.ClearCookie("auth_token")
+		return c.JSON(fiber.Map{
+			"message": "Logged out successfully",
+		})
+	}
 }
 
 // Me returns current authenticated user info
-func Me(c *fiber.Ctx) error {
-	username, ok := c.Locals("username").(string)
-	if !ok {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"error": "Not authenticated",
+func Me() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		username, ok := c.Locals("username").(string)
+		if !ok {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": "Not authenticated",
+			})
+		}
+
+		role, _ := c.Locals("role").(string)
+
+		return c.JSON(fiber.Map{
+			"username": username,
+			"role":     role,
 		})
 	}
-
-	role, _ := c.Locals("role").(string)
-
-	return c.JSON(fiber.Map{
-		"username": username,
-		"role":     role,
-	})
 }
 
 // ForgotPassword handles password reset requests
-func ForgotPassword(db database.DBConnection) fiber.Handler {
+func ForgotPassword(_ database.DBConnection) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var req ForgotPasswordRequest
 		if err := c.BodyParser(&req); err != nil {
@@ -175,7 +179,7 @@ func ChangePassword(db database.DBConnection) fiber.Handler {
 }
 
 // RefreshToken refreshes JWT token
-func RefreshToken(db database.DBConnection) fiber.Handler {
+func RefreshToken(_ database.DBConnection) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		oldToken := c.Cookies("auth_token")
 		if oldToken == "" {
@@ -426,7 +430,7 @@ func DeleteUser(db database.DBConnection) fiber.Handler {
 // HELPER FUNCTIONS
 // ============================================================================
 
-// SetAuthCookie sets the auth token cookie
+// SetAuthCookie sets the auth token cookie in the Fiber context.
 func SetAuthCookie(c *fiber.Ctx, token string) {
 	c.Cookie(&fiber.Cookie{
 		Name:     "auth_token",
@@ -551,7 +555,7 @@ func listUsers(ctx context.Context, db database.DBConnection) ([]*model.User, er
 	return users, nil
 }
 
-// GenerateRandomString generates a random string for tokens
+// GenerateRandomString generates a secure cryptographically random string for tokens.
 func GenerateRandomString(length int) (string, error) {
 	return GenerateSecureToken(length)
 }
