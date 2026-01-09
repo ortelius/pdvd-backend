@@ -5,7 +5,7 @@ orgs:
     metadata:
       owner: "alice@acme.com"
       tier: "enterprise"
-  
+
   - name: widgets
     display_name: "Widgets Inc"
     description: "Manufacturing partner"
