@@ -94,7 +94,12 @@ func main() {
 	app.Use(logger.New(logger.Config{
 		Format: "${time} | ${status} | ${latency} | ${ip} | ${method} | ${path} | ${locals:graphql_op} | ${error}\n",
 	}))
-	app.Use(cors.New())
+	app.Use(cors.New(cors.Config{
+		AllowOrigins:     "http://localhost:3000,http://localhost:4000,http://127.0.0.1:3000,http://127.0.0.1:4000",
+		AllowHeaders:     "Origin, Content-Type, Accept, Authorization, X-Requested-With",
+		AllowCredentials: true, // Required for cookies to be accepted
+		AllowMethods:     "GET, POST, HEAD, PUT, DELETE, PATCH, OPTIONS",
+	}))
 
 	// Health check endpoint
 	app.Get("/", func(c *fiber.Ctx) error {

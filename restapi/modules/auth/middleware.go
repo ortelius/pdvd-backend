@@ -3,56 +3,81 @@ package auth
 
 import (
 	"github.com/gofiber/fiber/v2"
+	"github.com/ortelius/pdvd-backend/v12/database"
 )
 
-// RequireAuth middleware validates JWT token from cookie and blocks guests
-func RequireAuth(c *fiber.Ctx) error {
-	token := c.Cookies("auth_token")
-	if token == "" {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"error": "Authentication required",
-		})
+// RequireAuth middleware validates JWT token from cookie and blocks guests.
+// UPDATED: Now requires DB connection to look up user details (Role/Orgs) not present in JWT.
+func RequireAuth(db database.DBConnection) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		token := c.Cookies("auth_token")
+		if token == "" {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": "Authentication required",
+			})
+		}
+
+		claims, err := ValidateJWT(token)
+		if err != nil {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": "Invalid or expired session",
+			})
+		}
+
+		// Perform DB Lookup to get fresh user details (Role, Orgs)
+		ctx := c.Context()
+		user, err := getUserByUsername(ctx, db, claims.Username)
+		if err != nil {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": "User not found or inactive",
+			})
+		}
+
+		// Store user info in context
+		c.Locals("is_authenticated", true)
+		c.Locals("username", user.Username)
+		c.Locals("role", user.Role) // Fetched from DB
+		c.Locals("orgs", user.Orgs) // Fetched from DB
+
+		return c.Next()
 	}
-
-	claims, err := ValidateJWT(token)
-	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"error": "Invalid or expired session",
-		})
-	}
-
-	// Store user info in context
-	c.Locals("is_authenticated", true)
-	c.Locals("username", claims.Username)
-	c.Locals("role", claims.Role)
-	c.Locals("orgs", claims.Orgs)
-
-	return c.Next()
 }
 
 // OptionalAuth identifies the user if a token is present but does not block guests.
 // This allows a single endpoint to serve both public and private data based on status.
-func OptionalAuth(c *fiber.Ctx) error {
-	token := c.Cookies("auth_token")
-	if token == "" {
-		c.Locals("is_authenticated", false)
+// UPDATED: Now requires DB connection to look up user details.
+func OptionalAuth(db database.DBConnection) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		token := c.Cookies("auth_token")
+		if token == "" {
+			c.Locals("is_authenticated", false)
+			return c.Next()
+		}
+
+		claims, err := ValidateJWT(token)
+		if err != nil {
+			// Treat invalid/expired tokens as guest access
+			c.Locals("is_authenticated", false)
+			return c.Next()
+		}
+
+		// Perform DB Lookup
+		ctx := c.Context()
+		user, err := getUserByUsername(ctx, db, claims.Username)
+		if err != nil {
+			// If token is valid but user deleted/inactive, treat as guest
+			c.Locals("is_authenticated", false)
+			return c.Next()
+		}
+
+		// User is authenticated; set context for handlers
+		c.Locals("is_authenticated", true)
+		c.Locals("username", user.Username)
+		c.Locals("role", user.Role) // Fetched from DB
+		c.Locals("orgs", user.Orgs) // Fetched from DB
+
 		return c.Next()
 	}
-
-	claims, err := ValidateJWT(token)
-	if err != nil {
-		// Treat invalid/expired tokens as guest access
-		c.Locals("is_authenticated", false)
-		return c.Next()
-	}
-
-	// User is authenticated; set context for handlers
-	c.Locals("is_authenticated", true)
-	c.Locals("username", claims.Username)
-	c.Locals("role", claims.Role)
-	c.Locals("orgs", claims.Orgs)
-
-	return c.Next()
 }
 
 // RequireRole middleware checks if user has one of the required roles

@@ -473,12 +473,16 @@ func convertToModelsAffected(allAffected []map[string]interface{}) []models.Affe
 }
 
 // ResolveOrgAggregatedReleases aggregates release data by organization
-func ResolveOrgAggregatedReleases(db database.DBConnection, severity string) ([]interface{}, error) {
+func ResolveOrgAggregatedReleases(db database.DBConnection, severity string, userOrgs []string, isAnonymous bool) ([]interface{}, error) {
 	ctx := context.Background()
 	severityScore := util.GetSeverityScore(severity)
 
 	query := `
 		FOR r IN release
+			FILTER (
+				@isAnonymous == true ? (r.visibility == "public" OR r.visibility == null) : 
+				(LENGTH(@userOrgs) == 0 OR r.org IN @userOrgs)
+			)
 			COLLECT org = r.org INTO groupedReleases = r
 			
 			LET latestReleases = (
@@ -636,6 +640,8 @@ func ResolveOrgAggregatedReleases(db database.DBConnection, severity string) ([]
 	cursor, err := db.Database.Query(ctx, query, &arangodb.QueryOptions{
 		BindVars: map[string]interface{}{
 			"severityScore": severityScore,
+			"userOrgs":      userOrgs,
+			"isAnonymous":   isAnonymous,
 		},
 	})
 	if err != nil {

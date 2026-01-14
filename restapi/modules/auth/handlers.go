@@ -199,7 +199,8 @@ func Login(db database.DBConnection) fiber.Handler {
 			})
 		}
 
-		token, err := GenerateJWT(user.Username, user.Role, user.Orgs)
+		// UPDATED: Only pass username to GenerateJWT
+		token, err := GenerateJWT(user.Username)
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 				"error": "Failed to generate token",
@@ -231,7 +232,7 @@ func Logout() fiber.Handler {
 // Me returns current authenticated user info
 func Me(db database.DBConnection) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		// Get username from validated JWT claim
+		// Get username from validated JWT claim (via middleware)
 		username, ok := c.Locals("username").(string)
 		if !ok {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
@@ -590,6 +591,7 @@ func DeleteUser(db database.DBConnection) fiber.Handler {
 // ============================================================================
 
 // SetAuthCookie sets the auth token cookie in the Fiber context.
+// UPDATED: Added Path="/" and SameSite="Lax" to ensure cross-port localhost compatibility
 func SetAuthCookie(c *fiber.Ctx, token string) {
 	c.Cookie(&fiber.Cookie{
 		Name:     "auth_token",
@@ -598,6 +600,7 @@ func SetAuthCookie(c *fiber.Ctx, token string) {
 		Secure:   false, // Set to true in production with HTTPS
 		SameSite: "Lax",
 		MaxAge:   86400, // 24 hours
+		Path:     "/",   // Ensure cookie is valid for entire domain
 	})
 }
 

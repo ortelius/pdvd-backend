@@ -74,11 +74,29 @@ func GetQueryFields(db database.DBConnection, releaseType *graphql.Object, affec
 		"orgAggregatedReleases": &graphql.Field{
 			Type: graphql.NewList(OrgAggregatedReleaseType),
 			Args: graphql.FieldConfigArgument{
-				"severity": &graphql.ArgumentConfig{Type: graphql.NewNonNull(severityType)},
+				"severity":    &graphql.ArgumentConfig{Type: graphql.NewNonNull(severityType)},
+				"userOrgs":    &graphql.ArgumentConfig{Type: graphql.NewList(graphql.String), DefaultValue: []string{}},
+				"isAnonymous": &graphql.ArgumentConfig{Type: graphql.Boolean, DefaultValue: false},
 			},
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 				severity := p.Args["severity"].(string)
-				return ResolveOrgAggregatedReleases(db, strings.ToLower(severity))
+				isAnonymous := p.Args["isAnonymous"].(bool)
+
+				// Handle userOrgs type conversion - can be []string (default) or []interface{} (from client)
+				var userOrgs []string
+				switch v := p.Args["userOrgs"].(type) {
+				case []interface{}:
+					userOrgs = make([]string, len(v))
+					for i, org := range v {
+						userOrgs[i] = org.(string)
+					}
+				case []string:
+					userOrgs = v
+				default:
+					userOrgs = []string{}
+				}
+
+				return ResolveOrgAggregatedReleases(db, strings.ToLower(severity), userOrgs, isAnonymous)
 			},
 		},
 	}

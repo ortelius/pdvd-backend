@@ -37,21 +37,20 @@ func CheckPasswordHash(password, hash string) bool {
 // ============================================================================
 
 // Claims represents JWT claims
+// UPDATED: Kept only Username (Subject) to minimize payload size.
+// Role and Orgs are now fetched from the database in the middleware.
 type Claims struct {
-	Username string   `json:"username"`
-	Role     string   `json:"role"`
-	Orgs     []string `json:"orgs,omitempty"` // NEW: Org-scoped access
+	Username string `json:"username"`
 	jwt.RegisteredClaims
 }
 
 // GenerateJWT generates a JWT token for a user
-func GenerateJWT(username, role string, orgs []string) (string, error) {
+// UPDATED: Removed role and orgs arguments
+func GenerateJWT(username string) (string, error) {
 	expirationTime := time.Now().Add(24 * time.Hour) // 24 hour expiry
 
 	claims := &Claims{
 		Username: username,
-		Role:     role,
-		Orgs:     orgs, // Include org scope in token
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expirationTime),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -99,8 +98,8 @@ func RefreshJWT(oldTokenString string) (string, error) {
 		return "", fmt.Errorf("cannot refresh invalid token: %w", err)
 	}
 
-	// Generate new token with same claims but fresh expiration
-	return GenerateJWT(claims.Username, claims.Role, claims.Orgs)
+	// Generate new token with same username but fresh expiration
+	return GenerateJWT(claims.Username)
 }
 
 // ============================================================================
@@ -155,10 +154,5 @@ func ValidatePasswordStrength(password string) error {
 	if len(password) < 8 {
 		return fmt.Errorf("password must be at least 8 characters long")
 	}
-	// Add more rules as needed:
-	// - Must contain uppercase
-	// - Must contain lowercase
-	// - Must contain number
-	// - Must contain special character
 	return nil
 }

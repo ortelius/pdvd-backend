@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors" // Import CORS middleware
 	"github.com/ortelius/pdvd-backend/v12/database"
 	"github.com/ortelius/pdvd-backend/v12/restapi/modules/auth"
 	"github.com/ortelius/pdvd-backend/v12/restapi/modules/releases"
@@ -17,6 +18,19 @@ import (
 
 // SetupRoutes configures all REST API routes
 func SetupRoutes(app *fiber.App, db database.DBConnection) {
+	// ========================================================================
+	// MIDDLEWARE
+	// ========================================================================
+	// Enable CORS for cross-port communication (frontend:4000 -> backend:3000)
+	app.Use(cors.New(cors.Config{
+		// Allow specific origins (frontend URL).
+		// We include both localhost and 127.0.0.1 to cover different browser resolutions.
+		AllowOrigins:     "http://localhost:3000,http://localhost:4000,http://127.0.0.1:3000,http://127.0.0.1:4000",
+		AllowHeaders:     "Origin, Content-Type, Accept, Authorization, X-Requested-With",
+		AllowCredentials: true, // Required for cookies to be accepted
+		AllowMethods:     "GET, POST, HEAD, PUT, DELETE, PATCH, OPTIONS",
+	}))
+
 	// Bootstrap admin user on startup (only runs if no users exist)
 	go func() {
 		if err := auth.BootstrapAdmin(db); err != nil {
@@ -54,9 +68,10 @@ func SetupRoutes(app *fiber.App, db database.DBConnection) {
 	authGroup := api.Group("/auth")
 	authGroup.Post("/login", auth.Login(db))
 	authGroup.Post("/logout", auth.Logout())
-	authGroup.Get("/me", auth.Me(db)) // UPDATED: Pass db connection here
+	// Updated: Me now implicitly uses optional auth behavior but middleware ensures lookup
+	authGroup.Get("/me", auth.OptionalAuth(db), auth.Me(db))
 	authGroup.Post("/forgot-password", auth.ForgotPassword(db))
-	authGroup.Post("/change-password", auth.ChangePassword(db))
+	authGroup.Post("/change-password", auth.RequireAuth(db), auth.ChangePassword(db))
 	authGroup.Post("/refresh", auth.RefreshToken(db))
 
 	// ========================================================================
@@ -70,7 +85,8 @@ func SetupRoutes(app *fiber.App, db database.DBConnection) {
 	// ========================================================================
 	// USER MANAGEMENT ENDPOINTS (Admin only)
 	// ========================================================================
-	userGroup := api.Group("/users", auth.RequireAuth, auth.RequireRole("admin"))
+	// Updated: Pass db to RequireAuth
+	userGroup := api.Group("/users", auth.RequireAuth(db), auth.RequireRole("admin"))
 	userGroup.Get("/", auth.ListUsers(db))
 	userGroup.Post("/", auth.CreateUser(db))
 	userGroup.Get("/:username", auth.GetUser(db))
@@ -80,23 +96,26 @@ func SetupRoutes(app *fiber.App, db database.DBConnection) {
 	// ========================================================================
 	// RBAC MANAGEMENT ENDPOINTS (Admin only)
 	// ========================================================================
-	rbac := api.Group("/rbac", auth.RequireAuth, auth.RequireRole("admin"))
+	// Updated: Pass db to RequireAuth
+	rbac := api.Group("/rbac", auth.RequireAuth(db), auth.RequireRole("admin"))
 	rbac.Post("/apply/content", auth.ApplyRBACFromBody(db, emailConfig))
 	rbac.Post("/apply/upload", auth.ApplyRBACFromUpload(db, emailConfig))
 	rbac.Post("/apply", auth.ApplyRBACFromFile(db, emailConfig))
-	rbac.Post("/validate", auth.ValidateRBAC(db))
+	rbac.Post("/validate", auth.HandleRBACValidate(db)) // Fixed: Use HandleRBACValidate from handler
 	rbac.Get("/config", auth.GetRBACConfig(db))
 	rbac.Get("/invitations", auth.ListPendingInvitationsHandler(db))
 
 	// ========================================================================
 	// RELEASE ENDPOINTS
 	// ========================================================================
-	api.Post("/releases", auth.OptionalAuth, releases.PostReleaseWithSBOM(db))
+	// Updated: Pass db to OptionalAuth
+	api.Post("/releases", auth.OptionalAuth(db), releases.PostReleaseWithSBOM(db))
 
 	// ========================================================================
 	// SYNC ENDPOINTS
 	// ========================================================================
-	api.Post("/sync", auth.OptionalAuth, sync.PostSyncWithEndpoint(db))
+	// Updated: Pass db to OptionalAuth
+	api.Post("/sync", auth.OptionalAuth(db), sync.PostSyncWithEndpoint(db))
 
 	log.Println("API routes initialized successfully")
 }
