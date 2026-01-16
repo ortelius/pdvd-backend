@@ -4,6 +4,7 @@ package releases
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"strings"
 
@@ -506,6 +507,8 @@ func ResolveOrgAggregatedReleases(db database.DBConnection, severity string, use
 		// If user has no orgs specified, they have global access (empty orgs = see all)
 		filterByPublic = false
 	}
+
+	fmt.Printf("User=%s\nOrgs=%v\n", username, userOrgs)
 
 	query := `
 		FOR r IN release

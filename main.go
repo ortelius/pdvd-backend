@@ -21,16 +21,6 @@ import (
 
 var db database.DBConnection
 
-// ctxKey defines a type for context keys to ensure type safety.
-type ctxKey string
-
-// Context keys for authenticated user data.
-const (
-	usernameKey ctxKey = "username"
-	roleKey     ctxKey = "role"
-	orgsKey     ctxKey = "orgs"
-)
-
 // GraphQLHandler handles GraphQL requests
 func GraphQLHandler(schema graphql.Schema) fiber.Handler {
 	return func(c *fiber.Ctx) error {
@@ -61,15 +51,15 @@ func GraphQLHandler(schema graphql.Schema) fiber.Handler {
 		ctx := context.Background()
 
 		// Extract user info from Fiber Locals (set by OptionalAuth middleware)
-		// and inject it into the GraphQL context using typed keys for safety.
+		// and inject it into the GraphQL context using string keys so resolvers can access them.
 		if username, ok := c.Locals("username").(string); ok {
-			ctx = context.WithValue(ctx, usernameKey, username)
+			ctx = context.WithValue(ctx, "username", username)
 		}
 		if role, ok := c.Locals("role").(string); ok {
-			ctx = context.WithValue(ctx, roleKey, role)
+			ctx = context.WithValue(ctx, "role", role)
 		}
 		if orgs, ok := c.Locals("orgs").([]string); ok {
-			ctx = context.WithValue(ctx, orgsKey, orgs)
+			ctx = context.WithValue(ctx, "orgs", orgs)
 		}
 
 		result := graphql.Do(graphql.Params{
