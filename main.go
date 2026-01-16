@@ -51,15 +51,15 @@ func GraphQLHandler(schema graphql.Schema) fiber.Handler {
 		ctx := context.Background()
 
 		// Extract user info from Fiber Locals (set by OptionalAuth middleware)
-		// and inject it into the GraphQL context using string keys so resolvers can access them.
+		// and inject it into the GraphQL context using SHARED auth keys
 		if username, ok := c.Locals("username").(string); ok {
-			ctx = context.WithValue(ctx, "username", username)
+			ctx = context.WithValue(ctx, auth.UserKey, username)
 		}
 		if role, ok := c.Locals("role").(string); ok {
-			ctx = context.WithValue(ctx, "role", role)
+			ctx = context.WithValue(ctx, auth.RoleKey, role)
 		}
 		if orgs, ok := c.Locals("orgs").([]string); ok {
-			ctx = context.WithValue(ctx, "orgs", orgs)
+			ctx = context.WithValue(ctx, auth.OrgsKey, orgs)
 		}
 
 		result := graphql.Do(graphql.Params{

@@ -10,6 +10,7 @@ import (
 	"github.com/graphql-go/graphql"
 	"github.com/ortelius/pdvd-backend/v12/database"
 	"github.com/ortelius/pdvd-backend/v12/model"
+	"github.com/ortelius/pdvd-backend/v12/restapi/modules/auth" // Imported for Context Keys
 )
 
 // GetQueryFields returns the release queries to be mounted in the root schema.
@@ -79,10 +80,10 @@ func GetQueryFields(db database.DBConnection, releaseType *graphql.Object, affec
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 				severity := p.Args["severity"].(string)
 
-				// Extract username from GraphQL context (set by HTTP handler from JWT)
+				// Extract username from GraphQL context using the typed key
 				username := ""
-				if p.Context != nil && p.Context.Value("username") != nil {
-					username = p.Context.Value("username").(string)
+				if p.Context != nil && p.Context.Value(auth.UserKey) != nil {
+					username = p.Context.Value(auth.UserKey).(string)
 				}
 
 				return ResolveOrgAggregatedReleases(db, strings.ToLower(severity), username)

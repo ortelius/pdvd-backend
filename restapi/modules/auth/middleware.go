@@ -6,6 +6,16 @@ import (
 	"github.com/ortelius/pdvd-backend/v12/database"
 )
 
+// CtxKey defines a type for context keys to ensure type safety and avoid collisions.
+type CtxKey string
+
+// Exported context keys for user authentication data
+const (
+	UserKey CtxKey = "username"
+	RoleKey CtxKey = "role"
+	OrgsKey CtxKey = "orgs"
+)
+
 // RequireAuth middleware validates JWT token from cookie and blocks guests.
 // UPDATED: Now requires DB connection to look up user details (Role/Orgs) not present in JWT.
 func RequireAuth(db database.DBConnection) fiber.Handler {
