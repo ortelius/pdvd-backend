@@ -2,6 +2,17 @@ apiVersion: v1
 entries:
   pdvd-backend:
   - apiVersion: v2
+    appVersion: 12.0.296
+    created: "2026-01-17T00:46:41.905156727Z"
+    description: Post-Deployment Vulnerability Detection Backend
+    digest: cc482ff614970254a99f2a7e97da3eb019a4aa1e0ac8a43b4e90d103e35c1077
+    icon: https://ortelius.github.io/ortelius-charts/logo.png
+    name: pdvd-backend
+    type: application
+    urls:
+    - https://github.com/ortelius/pdvd-backend/releases/download/v12.0.296/pdvd-backend-12.0.296.tgz
+    version: 12.0.296
+  - apiVersion: v2
     appVersion: 12.0.294
     created: "2026-01-16T11:07:25.684356144Z"
     description: Post-Deployment Vulnerability Detection Backend
@@ -1365,4 +1376,4 @@ entries:
     urls:
     - https://github.com/ortelius/pdvd-backend/releases/download/pdvd-backend-12.0.8/pdvd-backend-12.0.8.tgz
     version: 12.0.8
-generated: "2026-01-16T11:07:25.684047815Z"
+generated: "2026-01-17T00:46:41.904848907Z"
