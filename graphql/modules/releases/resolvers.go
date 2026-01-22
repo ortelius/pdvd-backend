@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
-	"strings"
 
 	"github.com/arangodb/go-driver/v2/arangodb"
 	"github.com/google/osv-scanner/pkg/models"
