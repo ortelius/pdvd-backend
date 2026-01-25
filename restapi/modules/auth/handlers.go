@@ -224,8 +224,7 @@ func Me(db database.DBConnection) fiber.Handler {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch user profile"})
 		}
 
-		// Validate GitHub connection on profile fetch, so revoked/uninstalled connections
-		// are reflected immediately.
+		// Validate GitHub connection on profile fetch
 		githubConnected := false
 		hasInstallationID := user.GitHubInstallationID != ""
 		hasUserToken := user.GitHubToken != ""
@@ -236,24 +235,21 @@ func Me(db database.DBConnection) fiber.Handler {
 			if hasInstallationID {
 				appToken, err := github.GetInstallationToken(user.GitHubInstallationID)
 				if err == nil {
-					// STRICT CHECK: Verify the installation actually has repo access.
-					// If the app is "installed" but has 0 repos allowed, it's effectively disconnected.
+					// Verify the installation actually has repo access
 					repos, repoErr := github.FetchRepos(appToken)
 					if repoErr == nil && len(repos) > 0 {
 						installationValid = true
 					} else {
 						// It's a zombie installation or empty permission set. Clear it.
-						fmt.Printf("[DEBUG] GitHub installation ID %s is DEFUNCT (0 repos or fetch error). Clearing.\n", user.GitHubInstallationID)
 						user.GitHubInstallationID = ""
 						installationValid = false
 					}
 				} else if isGitHubRevokedErr(err) {
-					// Installation revoked/uninstalled - clear it
-					fmt.Printf("[DEBUG] GitHub installation ID %s is REVOKED/UNINSTALLED: %v\n", user.GitHubInstallationID, err)
+					// Installation revoked/uninstalled
 					user.GitHubInstallationID = ""
 					installationValid = false
 				} else {
-					// Network error - stay optimistic to avoid false positives
+					// Network error - stay optimistic
 					installationValid = true
 				}
 			}
@@ -265,8 +261,7 @@ func Me(db database.DBConnection) fiber.Handler {
 				if err == nil && ok {
 					userTokenValid = true
 				} else if err == nil && !ok {
-					// Token is revoked (401/403) - clear it
-					fmt.Printf("[DEBUG] GitHub user token for %s is REVOKED (401/403)\n", username)
+					// Token is revoked (401/403)
 					user.GitHubToken = ""
 					userTokenValid = false
 				} else {
@@ -275,8 +270,6 @@ func Me(db database.DBConnection) fiber.Handler {
 				}
 			}
 
-			// PRIORITY LOGIC: If a user explicitly revoked their personal OAuth token (User Token),
-			// we treat the connection as broken even if an App installation still exists on their Org.
 			if hasUserToken && !userTokenValid {
 				githubConnected = false
 			} else {

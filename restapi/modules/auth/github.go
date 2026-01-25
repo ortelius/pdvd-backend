@@ -36,6 +36,11 @@ func GitHubCallback(db database.DBConnection) fiber.Handler {
 		clientID := os.Getenv("GITHUB_CLIENT_ID")
 		clientSecret := os.Getenv("GITHUB_CLIENT_SECRET")
 
+		if clientID == "" || clientSecret == "" {
+			return c.Status(fiber.StatusInternalServerError).SendString("Server misconfiguration")
+		}
+
+		// Exchange Code for User Token
 		reqBody, _ := json.Marshal(map[string]string{
 			"client_id":     clientID,
 			"client_secret": clientSecret,
@@ -46,7 +51,7 @@ func GitHubCallback(db database.DBConnection) fiber.Handler {
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Accept", "application/json")
 
-		client := &http.Client{}
+		client := &http.Client{Timeout: 10 * time.Second}
 		resp, err := client.Do(req)
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).SendString("Failed to exchange token")
@@ -58,19 +63,28 @@ func GitHubCallback(db database.DBConnection) fiber.Handler {
 			return c.Status(fiber.StatusInternalServerError).SendString("Failed to parse token response")
 		}
 
+		if errMsg, isError := result["error"]; isError {
+			return c.Status(fiber.StatusUnauthorized).SendString(fmt.Sprintf("GitHub Error: %v", errMsg))
+		}
+
 		accessToken, ok := result["access_token"].(string)
-		if !ok {
+		if !ok || accessToken == "" {
 			return c.Status(fiber.StatusUnauthorized).SendString("Failed to get access token")
 		}
 
-		// Get Current User
+		// Get Current User from Cookie
 		token := c.Cookies("auth_token")
+		if token == "" {
+			return c.Redirect("/?error=session_expired")
+		}
+
 		claims, err := ValidateJWT(token)
 		if err != nil {
 			return c.Redirect("/?error=session_expired")
 		}
 
 		username := claims.Username
+
 		ctx := c.Context()
 		user, err := getUserByUsername(ctx, db, username)
 		if err != nil {
@@ -79,15 +93,23 @@ func GitHubCallback(db database.DBConnection) fiber.Handler {
 
 		// Store Token and Installation ID
 		user.GitHubToken = accessToken
+
 		if installationID != "" {
 			user.GitHubInstallationID = installationID
 		}
+
 		user.UpdatedAt = time.Now()
 
 		if err := updateUser(ctx, db, user); err != nil {
 			return c.Status(fiber.StatusInternalServerError).SendString("Failed to save GitHub token")
 		}
 
-		return c.Redirect("/profile?github_connected=true")
+		// Redirect to Frontend Profile
+		// Uses BASE_URL env var (e.g., http://localhost:4000) or defaults to localhost:4000
+		frontendURL := os.Getenv("BASE_URL")
+		if frontendURL == "" {
+			frontendURL = "http://localhost:4000"
+		}
+		return c.Redirect(fmt.Sprintf("%s/profile?github_connected=true", frontendURL))
 	}
 }

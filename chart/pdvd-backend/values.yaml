@@ -5,3 +5,17 @@ image:
   tag: main-v10.0.92-g2eebd3
   sha: sha256:6720749f6628a424466140733ee11ce73d600a1b457d76d4d6ec7971b05c00ce
   pullPolicy: Always
+
+# URL Configuration
+# apiBaseUrl: The URL reachable by GitHub webhooks/callbacks (Backend)
+apiBaseUrl: "http://localhost:3000"
+# baseUrl: The URL reachable by Users (Frontend)
+baseUrl: "http://localhost:4000"
+
+# GitHub App Configuration
+github:
+  appName: ""
+  appId: ""
+  clientId: ""
+  clientSecret: ""
+  privateKey: ""

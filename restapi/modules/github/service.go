@@ -46,22 +46,17 @@ func GetInstallationToken(installationID string) (string, error) {
 
 	client := &http.Client{}
 	url := fmt.Sprintf("%s/app/installations/%s/access_tokens", githubAPI, installationID)
-	fmt.Printf("[DEBUG] Requesting GitHub installation token for installation ID: %s\n", installationID)
 	req, _ := http.NewRequest("POST", url, nil)
 	req.Header.Set("Authorization", "Bearer "+signedJWT)
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Printf("[DEBUG] GitHub installation token request failed (network error): %v\n", err)
 		return "", fmt.Errorf("failed to request installation token: %w", err)
 	}
 	defer resp.Body.Close()
 
-	fmt.Printf("[DEBUG] GitHub installation token API response: StatusCode=%d, Status=%s\n", resp.StatusCode, resp.Status)
-
 	if resp.StatusCode != 201 {
-		fmt.Printf("[DEBUG] GitHub installation token request failed: StatusCode=%d, Status=%s\n", resp.StatusCode, resp.Status)
 		return "", fmt.Errorf("github api error: %s", resp.Status)
 	}
 
