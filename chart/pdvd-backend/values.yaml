@@ -1,4 +1,3 @@
-# chart/pdvd-backend/values.yaml
 ---
 replicaCount: 1
 image:
@@ -7,25 +6,12 @@ image:
   sha: sha256:6720749f6628a424466140733ee11ce73d600a1b457d76d4d6ec7971b05c00ce
   pullPolicy: Always
 
-<<<<<<< HEAD
-# URL Configuration
-# apiBaseUrl: The URL reachable by GitHub webhooks/callbacks (Backend)
 apiBaseUrl: "http://localhost:3000"
-# baseUrl: The URL reachable by Users (Frontend)
 baseUrl: "http://localhost:4000"
 
-# GitHub App Configuration
 github:
   appName: ""
   appId: ""
   clientId: ""
   clientSecret: ""
   privateKey: ""
-=======
-github:
-  appId: "2695570"
-  appName: "deployhub-dev"
-  clientId: "Iv23liVE3QJYIS6BGQRa"
-  clientSecret: ""
-  privateKeyFile: ""
->>>>>>> 61e5ed5306d5fe70050d2db5462c69ff4d2a0787
