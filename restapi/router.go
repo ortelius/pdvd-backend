@@ -6,13 +6,16 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"time"
 
+	"github.com/go-git/go-git/v5"
+	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/cors" // Import CORS middleware
+	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/ortelius/pdvd-backend/v12/database"
 	"github.com/ortelius/pdvd-backend/v12/restapi/modules/auth"
-	"github.com/ortelius/pdvd-backend/v12/restapi/modules/github" // Import GitHub module
+	"github.com/ortelius/pdvd-backend/v12/restapi/modules/github"
 	"github.com/ortelius/pdvd-backend/v12/restapi/modules/releases"
 	"github.com/ortelius/pdvd-backend/v12/restapi/modules/sync"
 )
@@ -90,12 +93,82 @@ func SetupRoutes(app *fiber.App, db database.DBConnection) {
 	rbac.Post("/validate", auth.HandleRBACValidate(db))
 	rbac.Get("/config", auth.GetRBACConfig(db))
 	rbac.Get("/invitations", auth.ListPendingInvitationsHandler(db))
+	rbac.Post("/webhook", handleRBACWebhook(db, emailConfig))
 
 	// Release & Sync
 	api.Post("/releases", auth.OptionalAuth(db), releases.PostReleaseWithSBOM(db))
 	api.Post("/sync", auth.OptionalAuth(db), sync.PostSyncWithEndpoint(db))
 
 	log.Println("API routes initialized successfully")
+}
+
+func handleRBACWebhook(db database.DBConnection, emailConfig *auth.EmailConfig) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		yamlContent, err := syncRBACFromRepo()
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": err.Error(),
+			})
+		}
+
+		config, err := auth.LoadPeriobolosConfig(yamlContent)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "Invalid RBAC config: " + err.Error(),
+			})
+		}
+
+		result, err := auth.ApplyRBAC(db, config, emailConfig)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "Failed to apply RBAC: " + err.Error(),
+			})
+		}
+
+		return c.JSON(fiber.Map{
+			"success": true,
+			"message": "RBAC synchronized from repository",
+			"result":  result,
+		})
+	}
+}
+
+func syncRBACFromRepo() (string, error) {
+	repoURL := os.Getenv("RBAC_REPO")
+	token := os.Getenv("RBAC_REPO_TOKEN")
+
+	if repoURL == "" || token == "" {
+		return "", fmt.Errorf("RBAC_REPO and RBAC_REPO_TOKEN must be configured")
+	}
+
+	tempDir, err := os.MkdirTemp("", "rbac-sync-*")
+	if err != nil {
+		return "", fmt.Errorf("failed to create temp directory: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	authMethod := &githttp.BasicAuth{
+		Username: "oauth2",
+		Password: token,
+	}
+
+	_, err = git.PlainClone(tempDir, false, &git.CloneOptions{
+		URL:      repoURL,
+		Auth:     authMethod,
+		Depth:    1,
+		Progress: nil,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to clone RBAC repo: %w", err)
+	}
+
+	yamlPath := filepath.Join(tempDir, "rbac.yaml")
+	yamlContent, err := os.ReadFile(yamlPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read rbac.yaml: %w", err)
+	}
+
+	return string(yamlContent), nil
 }
 
 func startInvitationCleanup(db database.DBConnection) {
@@ -121,23 +194,52 @@ func runCleanup(db database.DBConnection) {
 }
 
 func autoApplyRBACOnStartup(db database.DBConnection, emailConfig *auth.EmailConfig) {
-	configPath := os.Getenv("RBAC_CONFIG_PATH")
-	if configPath == "" {
-		configPath = "/etc/pdvd/rbac.yaml"
-	}
-	if _, err := os.Stat(configPath); err == nil {
-		fmt.Println("🔄 Auto-applying RBAC configuration from:", configPath)
-		config, err := auth.LoadPeriobolosConfig(configPath)
+	// Check if RBAC repo is configured for GitOps mode
+	repoURL := os.Getenv("RBAC_REPO")
+	token := os.Getenv("RBAC_REPO_TOKEN")
+
+	var yamlContent string
+	var err error
+
+	if repoURL != "" && token != "" {
+		// GitOps mode: Fetch from GitHub
+		fmt.Println("🔄 Auto-applying RBAC configuration from GitHub:", repoURL)
+		yamlContent, err = syncRBACFromRepo()
 		if err != nil {
-			fmt.Printf("⚠️  Failed to load RBAC config: %v\n", err)
+			fmt.Printf("⚠️  Failed to sync RBAC from GitHub: %v\n", err)
 			return
 		}
-		result, err := auth.ApplyRBAC(db, config, emailConfig)
-		if err != nil {
-			fmt.Printf("⚠️  RBAC apply failed: %v\n", err)
+	} else {
+		// Fallback to local file mode
+		configPath := os.Getenv("RBAC_CONFIG_PATH")
+		if configPath == "" {
+			configPath = "/etc/pdvd/rbac.yaml"
+		}
+		if _, err := os.Stat(configPath); err != nil {
+			// Neither GitHub nor local file configured
 			return
 		}
-		fmt.Printf("✅ RBAC apply complete: %d created, %d updated, %d removed, %d invited\n",
-			len(result.Created), len(result.Updated), len(result.Removed), len(result.Invited))
+		fmt.Println("🔄 Auto-applying RBAC configuration from local file:", configPath)
+		yamlBytes, err := os.ReadFile(configPath)
+		if err != nil {
+			fmt.Printf("⚠️  Failed to read RBAC config: %v\n", err)
+			return
+		}
+		yamlContent = string(yamlBytes)
 	}
+
+	config, err := auth.LoadPeriobolosConfig(yamlContent)
+	if err != nil {
+		fmt.Printf("⚠️  Failed to load RBAC config: %v\n", err)
+		return
+	}
+
+	result, err := auth.ApplyRBAC(db, config, emailConfig)
+	if err != nil {
+		fmt.Printf("⚠️  RBAC apply failed: %v\n", err)
+		return
+	}
+
+	fmt.Printf("✅ RBAC apply complete: %d created, %d updated, %d removed, %d invited\n",
+		len(result.Created), len(result.Updated), len(result.Removed), len(result.Invited))
 }
