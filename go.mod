@@ -9,8 +9,8 @@ require (
 	github.com/arangodb/go-driver/v2 v2.1.6
 	github.com/cenkalti/backoff v2.2.1+incompatible
 	github.com/go-git/go-git/v5 v5.16.4
-	github.com/gofiber/fiber/v2 v2.52.10
-	github.com/golang-jwt/jwt/v5 v5.3.0
+	github.com/gofiber/fiber/v2 v2.52.11
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/osv-scanner v1.9.2
 	github.com/graphql-go/graphql v0.8.1
 	github.com/package-url/packageurl-go v0.1.3
