@@ -31,7 +31,10 @@
       "type": "object",
       "description": "Reference to the stored SBOM content",
       "properties": {
-        "cid": { "type": "string", "description": "IPFS CID of the SBOM content" },
+        "cid": {
+          "type": "string",
+          "description": "IPFS CID of the SBOM content"
+        },
         "storage_type": { "type": "string", "enum": ["ipfs", "s3"] },
         "content_sha": { "type": "string" },
         "uploaded_at": { "type": "string", "format": "date-time" }
@@ -43,9 +46,21 @@
       "description": "The deployment target (Endpoint) metadata",
       "properties": {
         "name": { "type": "string" },
-        "endpoint_type": { 
-          "type": "string", 
-          "enum": ["cluster", "ec2", "lambda", "ecs", "eks", "gke", "aks", "fargate", "edge", "iot", "mission_asset"] 
+        "endpoint_type": {
+          "type": "string",
+          "enum": [
+            "cluster",
+            "ec2",
+            "lambda",
+            "ecs",
+            "eks",
+            "gke",
+            "aks",
+            "fargate",
+            "edge",
+            "iot",
+            "mission_asset"
+          ]
         },
         "environment": { "type": "string" },
         "is_public": { "type": "boolean", "default": true }

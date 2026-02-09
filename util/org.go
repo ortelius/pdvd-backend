@@ -14,7 +14,7 @@ func NormalizeOrgNames(orgs []string) []string {
 	if orgs == nil {
 		return []string{}
 	}
-	
+
 	normalized := make([]string, len(orgs))
 	for i, org := range orgs {
 		normalized[i] = NormalizeOrgName(org)

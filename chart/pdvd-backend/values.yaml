@@ -18,7 +18,7 @@ github:
 
 # SMTP Configuration - Leave empty to disable email (invitations will print to console)
 smtp:
-  enabled: false  # Set to true to enable email sending
+  enabled: false # Set to true to enable email sending
   host: ""
   port: ""
   username: ""

@@ -143,6 +143,7 @@ graph TB
 ```
 
 **SLA Targets:**
+
 | Severity | Standard | Mission-Critical |
 |----------|----------|------------------|
 | Critical | 15 days  | 7 days           |
@@ -313,12 +314,12 @@ stateDiagram-v2
 
 ## 📈 Performance
 
-| Metric | Target | Actual |
-|--------|--------|--------|
-| API Response | <3s | <1s (p95) |
-| CVE Ingestion | 50K/hour | ✅ |
-| Concurrent Users | 100+ | ✅ |
-| Database Scale | 1M+ releases | ✅ |
+| Metric           | Target       | Actual    |
+|------------------|--------------|-----------|
+| API Response     | <3s          | <1s (p95) |
+| CVE Ingestion    | 50K/hour     | ✅         |
+| Concurrent Users | 100+         | ✅         |
+| Database Scale   | 1M+ releases | ✅         |
 
 ## 🛠️ Technology Stack
 

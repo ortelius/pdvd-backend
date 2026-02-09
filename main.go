@@ -13,17 +13,19 @@ import (
 )
 
 func main() {
-	// Initialize database connection
 	db := database.InitializeDatabase()
 
-	// Handle graceful shutdown
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	// Start Kafka processor
-	go kafka.RunEventProcessor(ctx, db)
+	// Attempt to start Kafka (Optional)
+	if err := kafka.RunEventProcessor(ctx, db); err != nil {
+		log.Printf("Warning: Kafka initialization failed after 3 tries: %v. Starting without Kafka support.", err)
+	} else {
+		log.Println("Kafka processor initialized successfully.")
+	}
 
-	// Start Fiber server with API routes
+	// Start everything else normally
 	app := api.NewFiberApp(db)
 	port := os.Getenv("MS_PORT")
 	if port == "" {
@@ -37,7 +39,6 @@ func main() {
 		}
 	}()
 
-	// Wait for termination signal
 	<-ctx.Done()
 	log.Println("Shutting down pdvd-backend...")
 	app.Shutdown()

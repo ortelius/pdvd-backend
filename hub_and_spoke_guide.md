@@ -916,22 +916,22 @@ graph TB
 
 ### Query Performance Benchmarks
 
-| Query | Traditional | Hub-and-Spoke | Speedup |
-|-------|-------------|---------------|---------|
-| CVE → Releases | 30s | 3s | 10x |
-| Release → CVEs | 15s | 0.5s | 30x |
-| Dashboard MTTR | 60s | 2s | 30x |
-| Org-filtered queries | 45s | 1s | 45x |
-| Post-deployment detection | 20s | 1s | 20x |
+| Query                     | Traditional | Hub-and-Spoke | Speedup |
+|---------------------------|-------------|---------------|---------|
+| CVE → Releases            | 30s         | 3s            | 10x     |
+| Release → CVEs            | 15s         | 0.5s          | 30x     |
+| Dashboard MTTR            | 60s         | 2s            | 30x     |
+| Org-filtered queries      | 45s         | 1s            | 45x     |
+| Post-deployment detection | 20s         | 1s            | 20x     |
 
 ### Storage Requirements
 
-| Data | Count | Traditional Size | Hub-and-Spoke Size | Reduction |
-|------|-------|------------------|-------------------|-----------|
-| **Nodes** | 11,100 | 5 MB | 5 MB | 0% |
-| **Edges** | - | 500 MB | 25 MB | 95% |
-| **Indexes** | - | 100 MB | 10 MB | 90% |
-| **Total** | - | 605 MB | 40 MB | **93.4%** |
+| Data        | Count  | Traditional Size | Hub-and-Spoke Size | Reduction |
+|-------------|--------|------------------|--------------------|-----------|
+| **Nodes**   | 11,100 | 5 MB             | 5 MB               | 0%        |
+| **Edges**   | -      | 500 MB           | 25 MB              | 95%       |
+| **Indexes** | -      | 100 MB           | 10 MB              | 90%       |
+| **Total**   | -      | 605 MB           | 40 MB              | **93.4%** |
 
 ---
 

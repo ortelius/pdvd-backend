@@ -13,10 +13,9 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
-// RunEventProcessor starts the Kafka consumer for release events.
-// Kafka messages contain the SBOM CID (and optional metadata)
-func RunEventProcessor(ctx context.Context, db database.DBConnection) {
-	// Parse Kafka brokers from environment variable
+// RunEventProcessor attempts to connect to Kafka 3 times.
+// If successful, it starts the consumer loop. If not, it returns an error.
+func RunEventProcessor(ctx context.Context, db database.DBConnection) error {
 	brokersEnv := os.Getenv("KAFKA_BROKERS")
 	var brokers []string
 	if brokersEnv != "" {
@@ -25,50 +24,58 @@ func RunEventProcessor(ctx context.Context, db database.DBConnection) {
 		brokers = []string{"localhost:9092"}
 	}
 
-	// Create Kafka reader
+	topic := "release-events"
+	var conn *kafka.Conn
+	var err error
+
+	// Retry logic: 3 tries
+	for i := 1; i <= 3; i++ {
+		log.Printf("Kafka connection attempt %d/3...", i)
+		conn, err = kafka.DialContext(ctx, "tcp", brokers[0])
+		if err == nil {
+			conn.Close()
+			break
+		}
+		if i < 3 {
+			time.Sleep(2 * time.Second)
+		}
+	}
+
+	if err != nil {
+		return err // Give up after 3 tries
+	}
+
+	// If connection is successful, start the reader
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:  brokers,
 		GroupID:  "pdvd-backend-worker",
-		Topic:    "release-events",
-		MaxBytes: 10e6, // 10MB per message
+		Topic:    topic,
+		MaxBytes: 10e6,
 	})
-	defer func() {
-		if err := reader.Close(); err != nil {
-			log.Printf("Error closing Kafka reader: %v", err)
+
+	go func() {
+		defer reader.Close()
+		service := &services.ReleaseServiceWrapper{DB: db}
+		fetcher := &services.CIDFetcher{}
+
+		log.Println("Kafka Event Processor started. Listening for release events...")
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				msg, err := reader.ReadMessage(ctx)
+				if err != nil {
+					if ctx.Err() != nil {
+						return
+					}
+					continue
+				}
+				_ = release.HandleReleaseSBOMCreatedWithService(ctx, msg.Value, fetcher, service)
+			}
 		}
 	}()
 
-	// Initialize ReleaseService
-	service := &services.ReleaseServiceWrapper{DB: db}
-
-	// Initialize SBOM fetcher
-	fetcher := &services.CIDFetcher{} // implements release.SBOMFetcher
-
-	log.Println("Kafka Event Processor started. Listening for release events...")
-
-	for {
-		select {
-		case <-ctx.Done():
-			log.Println("Kafka Event Processor shutting down...")
-			return
-		default:
-			// Read message
-			msg, err := reader.ReadMessage(ctx)
-			if err != nil {
-				if ctx.Err() != nil {
-					return
-				}
-				log.Printf("Kafka read error: %v. Retrying in 1s...", err)
-				time.Sleep(time.Second)
-				continue
-			}
-
-			// Pass the raw message to the release handler along with fetcher and service
-			if err := release.HandleReleaseSBOMCreatedWithService(ctx, msg.Value, fetcher, service); err != nil {
-				log.Printf("Handler error for message key=%s: %v", string(msg.Key), err)
-			} else {
-				log.Printf("Successfully processed message key=%s offset=%d", string(msg.Key), msg.Offset)
-			}
-		}
-	}
+	return nil
 }

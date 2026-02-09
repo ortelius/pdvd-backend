@@ -311,7 +311,7 @@ func ApplyRBAC(db database.DBConnection, config *PeriobolosConfig, emailConfig *
 		if err != nil {
 			newOrg := &model.Org{
 				Name:        normalizedOrgName, // Store lowercase
-				DisplayName: displayName,        // Store display name
+				DisplayName: displayName,       // Store display name
 				Description: orgDef.Description,
 				Metadata:    orgDef.Metadata,
 				CreatedAt:   time.Now(),

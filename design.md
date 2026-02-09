@@ -88,17 +88,17 @@ graph TB
 
 ### Technology Stack
 
-| Layer | Technology | Purpose |
-|-------|------------|---------|
-| **API Framework** | Fiber v2 | High-performance HTTP server |
-| **GraphQL** | graphql-go | Query flexibility |
-| **Database** | ArangoDB 3.11+ | Graph + document store |
-| **Auth** | golang-jwt/jwt | JWT generation/validation |
-| **Password** | bcrypt | Password hashing |
-| **CVE Data** | OSV.dev API | Vulnerability database |
-| **CVSS** | pandatix/go-cvss | Score calculation |
-| **Git** | go-git | GitOps integration |
-| **Email** | net/smtp | SMTP invitations |
+| Layer             | Technology       | Purpose                      |
+|-------------------|------------------|------------------------------|
+| **API Framework** | Fiber v2         | High-performance HTTP server |
+| **GraphQL**       | graphql-go       | Query flexibility            |
+| **Database**      | ArangoDB 3.11+   | Graph + document store       |
+| **Auth**          | golang-jwt/jwt   | JWT generation/validation    |
+| **Password**      | bcrypt           | Password hashing             |
+| **CVE Data**      | OSV.dev API      | Vulnerability database       |
+| **CVSS**          | pandatix/go-cvss | Score calculation            |
+| **Git**           | go-git           | GitOps integration           |
+| **Email**         | net/smtp         | SMTP invitations             |
 
 ---
 
@@ -1489,17 +1489,17 @@ graph TB
 
 ### Glossary
 
-| Term | Definition |
-|------|------------|
-| **PURL** | Package URL - standardized package identifier (pkg:type/namespace/name@version) |
-| **Hub-and-Spoke** | Graph pattern using central hub nodes to reduce edge count |
-| **MTTR** | Mean Time To Remediate - average days from CVE discovery to fix deployment |
-| **SLA** | Service Level Agreement - target remediation time based on severity |
-| **SBOM** | Software Bill of Materials - inventory of software components |
-| **CVE** | Common Vulnerabilities and Exposures - unique vulnerability identifier |
-| **CVSS** | Common Vulnerability Scoring System - severity scoring standard (0-10) |
-| **GitOps** | Infrastructure/config as code with Git as source of truth |
-| **Materialized Edge** | Pre-computed edge stored for performance (e.g., release2cve) |
+| Term                  | Definition                                                                      |
+|-----------------------|---------------------------------------------------------------------------------|
+| **PURL**              | Package URL - standardized package identifier (pkg:type/namespace/name@version) |
+| **Hub-and-Spoke**     | Graph pattern using central hub nodes to reduce edge count                      |
+| **MTTR**              | Mean Time To Remediate - average days from CVE discovery to fix deployment      |
+| **SLA**               | Service Level Agreement - target remediation time based on severity             |
+| **SBOM**              | Software Bill of Materials - inventory of software components                   |
+| **CVE**               | Common Vulnerabilities and Exposures - unique vulnerability identifier          |
+| **CVSS**              | Common Vulnerability Scoring System - severity scoring standard (0-10)          |
+| **GitOps**            | Infrastructure/config as code with Git as source of truth                       |
+| **Materialized Edge** | Pre-computed edge stored for performance (e.g., release2cve)                    |
 
 ### References
 
