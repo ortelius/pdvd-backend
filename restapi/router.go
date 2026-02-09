@@ -12,7 +12,7 @@ import (
 	"github.com/go-git/go-git/v5"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/graphql-go/graphql"
 	"github.com/ortelius/pdvd-backend/v12/database"
 	"github.com/ortelius/pdvd-backend/v12/restapi/modules/auth"
 	"github.com/ortelius/pdvd-backend/v12/restapi/modules/github"
@@ -20,18 +20,12 @@ import (
 	"github.com/ortelius/pdvd-backend/v12/restapi/modules/sync"
 )
 
-// SetupRoutes configures all REST API routes
-func SetupRoutes(app *fiber.App, db database.DBConnection) {
-	// ========================================================================
-	// MIDDLEWARE
-	// ========================================================================
-	app.Use(cors.New(cors.Config{
-		AllowOrigins:     "http://localhost:3000,http://localhost:4000,http://127.0.0.1:3000,http://127.0.0.1:4000",
-		AllowHeaders:     "Origin, Content-Type, Accept, Authorization, X-Requested-With",
-		AllowCredentials: true,
-		AllowMethods:     "GET, POST, HEAD, PUT, DELETE, PATCH, OPTIONS",
-	}))
+// SetupRoutes configures all REST API routes and the GraphQL endpoint.
+// Redundant CORS middleware has been removed here as it is now handled globally
+// in internal/api/fiber.go to prevent 408 timeouts.
+func SetupRoutes(app *fiber.App, db database.DBConnection, schema graphql.Schema) {
 
+	// Background initialization tasks
 	go func() {
 		if err := auth.BootstrapAdmin(db); err != nil {
 			log.Printf("WARNING: Failed to bootstrap admin: %v", err)
@@ -48,7 +42,11 @@ func SetupRoutes(app *fiber.App, db database.DBConnection) {
 	go autoApplyRBACOnStartup(db, emailConfig)
 	go startInvitationCleanup(db)
 
+	// API Group /api/v1
 	api := app.Group("/api/v1")
+
+	// GraphQL Route - Mounted within the api group to inherit path prefixes
+	api.Post("/graphql", auth.OptionalAuth(db), GraphQLHandler(schema))
 
 	// Public Routes
 	api.Post("/signup", auth.Signup(db, emailConfig))
