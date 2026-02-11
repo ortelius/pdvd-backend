@@ -396,6 +396,7 @@ func ResolveEndpointDetails(db database.DBConnection, endpointName string) (map[
 
 // ResolveSyncedEndpoints fetches a list of endpoints that have been synced.
 // REFACTORED: Now uses release2cve materialized edges instead of complex AQL filtering
+// FIXED: Moved deduplication outside service loop to correctly count across all services
 func ResolveSyncedEndpoints(db database.DBConnection, limit int, org string) ([]map[string]interface{}, error) {
 	ctx := context.Background()
 
@@ -623,6 +624,7 @@ func ResolveSyncedEndpoints(db database.DBConnection, limit int, org string) ([]
 	// ========================================================================
 	// STEP 4: Assembly
 	// Aggregate vulns for each endpoint, calculating deltas
+	// FIXED: Move deduplication OUTSIDE the service loop to deduplicate across ALL services
 	// ========================================================================
 
 	var finalEndpoints []map[string]interface{}
@@ -634,12 +636,15 @@ func ResolveSyncedEndpoints(db database.DBConnection, limit int, org string) ([]
 		currCounts := map[string]int{"critical": 0, "high": 0, "medium": 0, "low": 0}
 		prevCounts := map[string]int{"critical": 0, "high": 0, "medium": 0, "low": 0}
 
+		// FIX: Move deduplication maps OUTSIDE the service loop to deduplicate across ALL services
+		seen := make(map[string]bool)
+		seenPrev := make(map[string]bool)
+
 		for _, svc := range ep.Services {
 			// 1. Current Vulnerabilities
 			currKey := svc.Name + ":" + svc.Current.Version
 			currVulns := releaseVulnMap[currKey]
 
-			seen := make(map[string]bool)
 			for _, v := range currVulns {
 				cveID := v["cve_id"].(string)
 
@@ -674,7 +679,6 @@ func ResolveSyncedEndpoints(db database.DBConnection, limit int, org string) ([]
 				prevKey := svc.Name + ":" + svc.Previous.Version
 				prevVulns := releaseVulnMap[prevKey]
 
-				seenPrev := make(map[string]bool)
 				for _, v := range prevVulns {
 					cveID := v["cve_id"].(string)
 
