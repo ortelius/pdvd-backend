@@ -394,7 +394,6 @@ func ResolveEndpointDetails(db database.DBConnection, endpointName string) (map[
 }
 
 // ResolveSyncedEndpoints fetches a list of endpoints that have been synced.
-// REFACTORED: Now uses release2cve materialized edges instead of complex AQL filtering
 func ResolveSyncedEndpoints(db database.DBConnection, limit int, org string) ([]map[string]interface{}, error) {
 	ctx := context.Background()
 
@@ -605,10 +604,19 @@ func ResolveSyncedEndpoints(db database.DBConnection, limit int, org string) ([]
 				continue
 			}
 
-			// NO VALIDATION NEEDED - edges are pre-validated during ingestion
+			// LOGIC MATCH: Deduplicate per RELEASE (just like ResolveEndpointDetails)
 			var validVulns []map[string]interface{}
+			seen := make(map[string]bool)
 
 			for _, v := range res.Vulns {
+				// Local deduplication for this release (CVE + Package)
+				// This handles duplicate edges in the DB for the same release
+				key := v.CveID + ":" + v.Package
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+
 				validVulns = append(validVulns, map[string]interface{}{
 					"cve_id":          v.CveID,
 					"severity_rating": v.SeverityRating,
@@ -634,30 +642,14 @@ func ResolveSyncedEndpoints(db database.DBConnection, limit int, org string) ([]
 		prevCounts := map[string]int{"critical": 0, "high": 0, "medium": 0, "low": 0}
 
 		for _, svc := range ep.Services {
-			// FIX: Move deduplication maps INSIDE the service loop to deduplicate per service (matches Details view)
-			seen := make(map[string]bool)
-			seenPrev := make(map[string]bool)
+			// LOGIC MATCH: Sum across all services WITHOUT further deduplication
+			// This counts instances (e.g. Vuln X in Service A and Service B counts as 2)
 
 			// 1. Current Vulnerabilities
 			currKey := svc.Name + ":" + svc.Current.Version
 			currVulns := releaseVulnMap[currKey]
 
 			for _, v := range currVulns {
-				cveID := v["cve_id"].(string)
-
-				// Ensure we handle package info for deduplication
-				pkg := ""
-				if p, ok := v["package"].(string); ok {
-					pkg = p
-				}
-				// Use composite key to count Instances (matching Details view)
-				dedupKey := cveID + ":" + pkg
-
-				if seen[dedupKey] {
-					continue
-				}
-				seen[dedupKey] = true
-
 				rating := v["severity_rating"].(string)
 				switch rating {
 				case "CRITICAL":
@@ -677,19 +669,6 @@ func ResolveSyncedEndpoints(db database.DBConnection, limit int, org string) ([]
 				prevVulns := releaseVulnMap[prevKey]
 
 				for _, v := range prevVulns {
-					cveID := v["cve_id"].(string)
-
-					pkg := ""
-					if p, ok := v["package"].(string); ok {
-						pkg = p
-					}
-					dedupKey := cveID + ":" + pkg
-
-					if seenPrev[dedupKey] {
-						continue
-					}
-					seenPrev[dedupKey] = true
-
 					rating := v["severity_rating"].(string)
 					switch rating {
 					case "CRITICAL":

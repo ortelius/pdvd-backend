@@ -4,7 +4,6 @@ package releases
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/url"
 
 	"github.com/arangodb/go-driver/v2/arangodb"
@@ -473,15 +472,17 @@ func convertToModelsAffected(allAffected []map[string]interface{}) []models.Affe
 	return result
 }
 
+// filepath: graphql/modules/releases/resolvers.go
+
 // ResolveOrgAggregatedReleases aggregates release data by organization
-// FIXED: Removed runtime toLowerCase() conversion - org names are now stored lowercase
+// FIXED: Deduplicates vulnerability matches BEFORE calculating severity counts to ensure totals match
 func ResolveOrgAggregatedReleases(db database.DBConnection, severity string, username string) ([]interface{}, error) {
 	ctx := context.Background()
 	severityScore := util.GetSeverityScore(severity)
 
 	// Determine org filter based on authentication status
-	userOrgs := []string{} // Initialize as empty slice, not nil
-	filterByPublic := true // Default to public only
+	userOrgs := []string{}
+	filterByPublic := true
 
 	if username != "" {
 		// User is authenticated - fetch their orgs from database
@@ -495,17 +496,13 @@ func ResolveOrgAggregatedReleases(db database.DBConnection, severity string, use
 				var orgs []string
 				_, readErr := cursor.ReadDocument(ctx, &orgs)
 				if readErr == nil && orgs != nil {
-					// Orgs are already stored lowercase - no conversion needed
 					userOrgs = orgs
 				}
 			}
 		}
-
-		// If user has no orgs specified, they have global access (empty orgs = see all)
+		// If user has no orgs specified, they have global access
 		filterByPublic = false
 	}
-
-	fmt.Printf("User=%s\nOrgs=%v\n", username, userOrgs)
 
 	query := `
 		FOR r IN release
@@ -569,15 +566,19 @@ func ResolveOrgAggregatedReleases(db database.DBConnection, severity string, use
 							}
 					)
 					
-					LET uniqueInstances = (
+					// FIX: Deduplicate (CVE+Package) matches FIRST
+					LET uniqueMatches = (
 						FOR match IN cveMatches
-							COLLECT cveId = match.cve_id, package = match.package
-							RETURN 1
+							COLLECT cveId = match.cve_id, package = match.package INTO groups = match
+							// Since cveId is the same, the severity_rating will be the same for all in the group
+							LET severity = groups[0].severity_rating
+							RETURN { cveId, package, severity }
 					)
 					
+					// FIX: Calculate severity counts from the UNIQUE list, not the raw list
 					LET severityCounts = (
-						FOR match IN cveMatches
-							COLLECT severity = match.severity_rating WITH COUNT INTO count
+						FOR match IN uniqueMatches
+							COLLECT severity = match.severity WITH COUNT INTO count
 							RETURN { severity, count }
 					)
 					
@@ -610,8 +611,8 @@ func ResolveOrgAggregatedReleases(db database.DBConnection, severity string, use
 					RETURN {
 						dependency_count: LENGTH(dependencyCount),
 						synced_endpoint_count: syncCount,
-						vulnerability_count: LENGTH(uniqueInstances),
-						vulnerability_count_delta: prevVulnCount != null ? (LENGTH(uniqueInstances) - prevVulnCount) : null,
+						vulnerability_count: LENGTH(uniqueMatches),
+						vulnerability_count_delta: prevVulnCount != null ? (LENGTH(uniqueMatches) - prevVulnCount) : null,
 						max_severity: LENGTH(cveMatches) > 0 ? MAX(cveMatches[*].severity_score) : 0,
 						scorecard_score: latest.openssf_scorecard_score,
 						severity_counts: severityCounts
