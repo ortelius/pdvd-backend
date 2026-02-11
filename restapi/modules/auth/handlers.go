@@ -270,9 +270,11 @@ func Me(db database.DBConnection) fiber.Handler {
 				}
 			}
 
-			if hasUserToken && !userTokenValid {
+			// Convert if-else chain to switch statement (gocritic fix)
+			switch {
+			case hasUserToken && !userTokenValid:
 				githubConnected = false
-			} else {
+			default:
 				githubConnected = userTokenValid || (hasInstallationID && installationValid)
 			}
 
@@ -323,6 +325,7 @@ func validateGitHubUserToken(token string) (bool, error) {
 	}
 	defer resp.Body.Close()
 
+	// Convert if-else chain to switch statement (gocritic fix)
 	switch resp.StatusCode {
 	case http.StatusUnauthorized, http.StatusForbidden:
 		return false, nil
@@ -593,6 +596,7 @@ func DeleteUser(db database.DBConnection) fiber.Handler {
 // HELPER FUNCTIONS
 // ============================================================================
 
+// SetAuthCookie sets the authentication cookie for a user session.
 func SetAuthCookie(c *fiber.Ctx, token string) {
 	c.Cookie(&fiber.Cookie{
 		Name:     "auth_token",
@@ -715,6 +719,7 @@ func listUsers(ctx context.Context, db database.DBConnection) ([]*model.User, er
 	return users, nil
 }
 
+// GenerateRandomString generates a secure random string of the specified length.
 func GenerateRandomString(length int) (string, error) {
 	return GenerateSecureToken(length)
 }

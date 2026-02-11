@@ -1,3 +1,4 @@
+// Package restapi provides HTTP handlers for the REST API including GraphQL support.
 package restapi
 
 import (

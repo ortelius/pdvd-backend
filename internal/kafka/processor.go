@@ -1,3 +1,4 @@
+// Package kafka provides Kafka event processing functionality for the PDVD backend.
 package kafka
 
 import (

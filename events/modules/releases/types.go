@@ -1,3 +1,4 @@
+// Package release defines types for Kafka event processing of release SBOM creation events.
 package release
 
 import (
@@ -6,6 +7,7 @@ import (
 	"github.com/ortelius/pdvd-backend/v12/model"
 )
 
+// ReleaseSBOMCreatedEvent represents a release SBOM creation event published to Kafka.
 type ReleaseSBOMCreatedEvent struct {
 	EventType     string    `json:"event_type"`
 	EventID       string    `json:"event_id"`

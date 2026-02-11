@@ -1,3 +1,4 @@
+// Package release handles Kafka event production for release SBOM creation events.
 package release
 
 import (

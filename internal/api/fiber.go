@@ -1,3 +1,4 @@
+// Package api provides HTTP server configuration and initialization for the PDVD backend.
 package api
 
 import (

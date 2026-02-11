@@ -1,3 +1,4 @@
+// Package auth provides authentication and authorization handlers for the PDVD backend.
 package auth
 
 import (

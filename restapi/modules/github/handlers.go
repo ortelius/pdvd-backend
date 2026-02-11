@@ -1,3 +1,4 @@
+// Package github provides GitHub integration handlers for the REST API.
 package github
 
 import (

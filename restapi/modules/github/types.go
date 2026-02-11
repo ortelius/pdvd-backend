@@ -1,7 +1,9 @@
+// Package github provides GitHub integration types for the REST API.
 package github
 
 import "time"
 
+// GitHubRepo represents a GitHub repository.
 type GitHubRepo struct {
 	ID          int    `json:"id"`
 	Name        string `json:"name"`
@@ -11,6 +13,7 @@ type GitHubRepo struct {
 	Private     bool   `json:"private"`
 }
 
+// GitHubRelease represents a GitHub release.
 type GitHubRelease struct {
 	Name        string    `json:"name"`
 	TagName     string    `json:"tag_name"`
@@ -18,6 +21,7 @@ type GitHubRelease struct {
 	Body        string    `json:"body"`
 }
 
+// GitHubWorkflowRun represents a GitHub Actions workflow run.
 type GitHubWorkflowRun struct {
 	ID         int       `json:"id"`
 	Name       string    `json:"name"`
@@ -28,6 +32,7 @@ type GitHubWorkflowRun struct {
 	HeadSha    string    `json:"head_sha"`
 }
 
+// OnboardRequest represents a request to onboard GitHub repositories.
 type OnboardRequest struct {
 	Repos []string `json:"repos"` // List of full_names (e.g. "owner/repo")
 }

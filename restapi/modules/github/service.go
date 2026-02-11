@@ -1,3 +1,4 @@
+// Package github provides GitHub integration services for the REST API.
 package github
 
 import (
@@ -99,6 +100,7 @@ func FetchRepos(installationToken string) ([]GitHubRepo, error) {
 	return result.Repositories, nil
 }
 
+// FetchReleases retrieves releases for a GitHub repository.
 func FetchReleases(token, owner, repo string) ([]GitHubRelease, error) {
 	client := &http.Client{}
 	url := fmt.Sprintf("%s/repos/%s/%s/releases", githubAPI, owner, repo)
@@ -123,6 +125,7 @@ func FetchReleases(token, owner, repo string) ([]GitHubRelease, error) {
 	return releases, nil
 }
 
+// FetchWorkflowRuns retrieves workflow runs for a GitHub repository.
 func FetchWorkflowRuns(token, owner, repo string) ([]GitHubWorkflowRun, error) {
 	client := &http.Client{}
 	url := fmt.Sprintf("%s/repos/%s/%s/actions/runs?status=success&per_page=10", githubAPI, owner, repo)

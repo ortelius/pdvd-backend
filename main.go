@@ -1,3 +1,4 @@
+// Package main is the entry point for the PDVD backend application.
 package main
 
 import (

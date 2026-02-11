@@ -1,3 +1,4 @@
+// Package services provides internal service implementations for the PDVD backend.
 package services
 
 import (
@@ -12,7 +13,7 @@ import (
 type CIDFetcher struct{}
 
 // FetchSBOM retrieves the SBOM content by CID (as bytes)
-func (f *CIDFetcher) FetchSBOM(ctx context.Context, cid string) ([]byte, error) {
+func (f *CIDFetcher) FetchSBOM(_ context.Context, cid string) ([]byte, error) {
 	log.Printf("Fetching SBOM for CID: %s", cid)
 
 	if cid == "" {

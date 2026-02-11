@@ -1,3 +1,4 @@
+// Package release handles Kafka event processing for release SBOM creation events.
 package release
 
 import (
@@ -9,14 +10,17 @@ import (
 	"github.com/ortelius/pdvd-backend/v12/model"
 )
 
+// SBOMFetcher defines the interface for fetching SBOM content from storage.
 type SBOMFetcher interface {
 	FetchSBOM(ctx context.Context, cid string) ([]byte, error)
 }
 
+// ReleaseService defines the interface for release service operations.
 type ReleaseService interface {
 	CreateRelease(ctx context.Context, release model.ReleaseWithSBOM) error
 }
 
+// HandleReleaseSBOMCreatedWithService processes release SBOM created events from Kafka.
 func HandleReleaseSBOMCreatedWithService(
 	ctx context.Context,
 	msg []byte,
