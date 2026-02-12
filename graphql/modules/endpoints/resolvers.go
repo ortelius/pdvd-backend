@@ -431,7 +431,7 @@ func ResolveSyncedEndpoints(db database.DBConnection, limit int, org string) ([]
 	inventoryQuery := `
 		FOR endpoint IN endpoint
 			// Org filter on the endpoint itself — not on individual releases.
-			FILTER @org == "" OR endpoint.org == @org
+			FILTER @org == "" OR LOWER(endpoint.org) == LOWER(@org)
 			LIMIT @limit
 			
 			LET services = (
