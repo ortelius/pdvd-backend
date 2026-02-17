@@ -3,12 +3,15 @@ package release
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
+	"os"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/ortelius/pdvd-backend/v12/model"
 	"github.com/segmentio/kafka-go"
+	"github.com/segmentio/kafka-go/sasl/plain"
 )
 
 // ReleaseProducer handles sending SBOM creation events to Kafka
@@ -18,11 +21,32 @@ type ReleaseProducer struct {
 
 // NewReleaseProducer initializes a new Kafka writer for release events
 func NewReleaseProducer(brokers []string, topic string) *ReleaseProducer {
+
+	username := os.Getenv("KAFKA_API_KEY")
+	password := os.Getenv("KAFKA_API_SECRET")
+
+	var transport *kafka.Transport
+
+	if username != "" && password != "" {
+		mechanism := plain.Mechanism{
+			Username: username,
+			Password: password,
+		}
+
+		transport = &kafka.Transport{
+			SASL: mechanism,
+			TLS:  &tls.Config{},
+		}
+	} else {
+		transport = &kafka.Transport{}
+	}
+
 	return &ReleaseProducer{
 		Writer: &kafka.Writer{
-			Addr:     kafka.TCP(brokers...),
-			Topic:    topic,
-			Balancer: &kafka.LeastBytes{},
+			Addr:      kafka.TCP(brokers...),
+			Topic:     topic,
+			Balancer:  &kafka.LeastBytes{},
+			Transport: transport, // Add the transport here
 		},
 	}
 }
