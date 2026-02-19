@@ -239,6 +239,16 @@ func InitializeDatabase() DBConnection {
 		// CVE Lifecycle indexes
 		{Collection: "cve_lifecycle", IdxName: "lifecycle_cve_id", IdxField: []string{"cve_id"}, Unique: false},
 		{Collection: "cve_lifecycle", IdxName: "lifecycle_remediated", IdxField: []string{"is_remediated"}, Unique: false},
+
+		// Composite index for vulnerability trend query — avoids full collection
+		// scan when joining cve_lifecycle against active (endpoint, release, version) tuples
+		{Collection: "cve_lifecycle", IdxName: "lifecycle_endpoint_release_version",
+			IdxField: []string{"endpoint_name", "release_name", "introduced_version"}, Unique: false},
+
+		// Composite index for sync snapshot lookups — allows ArangoDB to satisfy
+		// the COLLECT + MAX(synced_at) aggregation without a full collection scan
+		{Collection: "sync", IdxName: "sync_endpoint_release",
+			IdxField: []string{"endpoint_name", "release_name"}, Unique: false},
 	}
 
 	for _, idx := range idxList {

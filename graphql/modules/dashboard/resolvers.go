@@ -156,7 +156,13 @@ func ResolveTopRisks(db database.DBConnection, assetType string, limit int, org 
 	return risks, nil
 }
 
-// ResolveVulnerabilityTrend returns daily counts using temporal logic and case-insensitive severity matching.
+// ResolveVulnerabilityTrend returns daily counts using a two-phase approach:
+//  1. Compute the latest active (endpoint, release, version) snapshot ONCE and pull all
+//     relevant lifecycle events in a single pass — avoiding repeated full-collection scans.
+//  2. Aggregate those pre-fetched events per day in AQL, which operates entirely on the
+//     in-memory result set rather than hitting the collections again.
+//
+// This reduces database I/O from O(days × collections) to O(1 × collections).
 func ResolveVulnerabilityTrend(db database.DBConnection, days int, org string) ([]map[string]interface{}, error) {
 	ctx := context.Background()
 	if days <= 0 {
@@ -165,55 +171,71 @@ func ResolveVulnerabilityTrend(db database.DBConnection, days int, org string) (
 	now := time.Now().UTC()
 
 	query := `
-		// Normalize to midnight UTC for consistent daily boundaries
+		// ── PHASE 1: resolve active snapshots and pull lifecycle events ONCE ──────
+
+		LET latest_snapshots = (
+			FOR s IN sync
+				COLLECT endpoint = s.endpoint_name, releaseName = s.release_name
+				AGGREGATE latest_ts = MAX(DATE_TIMESTAMP(s.synced_at))
+				LET version = (
+					FOR sv IN sync
+						FILTER sv.endpoint_name == endpoint
+						AND sv.release_name == releaseName
+						AND DATE_TIMESTAMP(sv.synced_at) == latest_ts
+						LIMIT 1
+						RETURN sv.release_version
+				)[0]
+
+				// Org filter applied once here, not repeated per day
+				LET relDoc = (
+					FOR r IN release
+						FILTER r.name == releaseName AND r.version == version
+						LIMIT 1
+						RETURN r.org
+				)[0]
+				FILTER @org == "" OR relDoc == @org
+
+				RETURN { endpoint, release: releaseName, version }
+		)
+
+		// Pull every lifecycle event that could appear in any day of the window.
+		// The composite index on (endpoint_name, release_name, introduced_version)
+		// makes this lookup fast rather than a full collection scan.
+		LET all_lifecycle = (
+			FOR active IN latest_snapshots
+				FOR r IN cve_lifecycle
+					FILTER r.endpoint_name == active.endpoint
+					AND r.release_name == active.release
+					AND r.introduced_version == active.version
+					RETURN {
+						severity:       UPPER(r.severity_rating),
+						introduced_ts:  DATE_TIMESTAMP(r.introduced_at),
+						remediated_ts:  r.remediated_at != null ? DATE_TIMESTAMP(r.remediated_at) : null
+					}
+		)
+
+		// ── PHASE 2: aggregate per day from the in-memory result set ─────────────
+
 		LET now_ts = DATE_TIMESTAMP(DATE_TRUNC(@now, "day"))
-		
+
 		FOR day_offset IN 0..@days
 			LET current_day_ts = DATE_SUBTRACT(now_ts, day_offset, "day")
 			LET eod_ts = DATE_TIMESTAMP(DATE_ADD(current_day_ts, 1, "day"))
-			
-			// Get active versions for this specific day
-			LET active_versions = (
-				FOR s IN sync
-					FILTER DATE_TIMESTAMP(s.synced_at) <= eod_ts
-					COLLECT endpoint = s.endpoint_name, releaseName = s.release_name INTO groups = s
-					LET latest_for_day = (FOR g IN groups SORT DATE_TIMESTAMP(g.synced_at) DESC LIMIT 1 RETURN g)[0]
-					
-					// Filter by Org
-					LET relDoc = (FOR r IN release FILTER r.name == latest_for_day.release_name AND r.version == latest_for_day.release_version LIMIT 1 RETURN r)[0]
-					FILTER @org == "" OR relDoc.org == @org
 
-					RETURN { endpoint, release: releaseName, version: latest_for_day.release_version }
+			LET day_counts = (
+				FOR r IN all_lifecycle
+					FILTER r.introduced_ts <= eod_ts
+					FILTER r.remediated_ts == null OR r.remediated_ts > eod_ts
+					COLLECT severity = r.severity WITH COUNT INTO count
+					RETURN { severity, count }
 			)
-			
-			// Aggregated counts by severity (case-insensitive)
-			LET counts = (
-				FOR active IN active_versions
-					FOR r IN cve_lifecycle
-						FILTER r.endpoint_name == active.endpoint 
-						AND r.release_name == active.release 
-						AND r.introduced_version == active.version
-						
-						FILTER DATE_TIMESTAMP(r.introduced_at) <= eod_ts
-						FILTER (r.remediated_at == null OR DATE_TIMESTAMP(r.remediated_at) > eod_ts)
-						
-						COLLECT severity = UPPER(r.severity_rating) WITH COUNT INTO count
-						RETURN { severity, count }
-			)
-			
-			LET aggregated = (
-				FOR c IN counts 
-					COLLECT s = c.severity 
-					AGGREGATE t = SUM(c.count) 
-					RETURN { s, t }
-			)
-			
+
 			RETURN {
-				date: DATE_FORMAT(current_day_ts, "%yyyy-%mm-%dd"),
-				critical: FIRST(FOR a IN aggregated FILTER a.s == "CRITICAL" RETURN a.t) || 0,
-				high:     FIRST(FOR a IN aggregated FILTER a.s == "HIGH" RETURN a.t) || 0,
-				medium:   FIRST(FOR a IN aggregated FILTER a.s == "MEDIUM" RETURN a.t) || 0,
-				low:      FIRST(FOR a IN aggregated FILTER a.s == "LOW" RETURN a.t) || 0
+				date:     DATE_FORMAT(current_day_ts, "%yyyy-%mm-%dd"),
+				critical: FIRST(FOR d IN day_counts FILTER d.severity == "CRITICAL" RETURN d.count) || 0,
+				high:     FIRST(FOR d IN day_counts FILTER d.severity == "HIGH"     RETURN d.count) || 0,
+				medium:   FIRST(FOR d IN day_counts FILTER d.severity == "MEDIUM"   RETURN d.count) || 0,
+				low:      FIRST(FOR d IN day_counts FILTER d.severity == "LOW"      RETURN d.count) || 0
 			}
 	`
 
@@ -237,6 +259,7 @@ func ResolveVulnerabilityTrend(db database.DBConnection, days int, org string) (
 		}
 	}
 
+	// Results come out newest-first (day_offset 0 = today); reverse to chronological order.
 	for i, j := 0, len(trendData)-1; i < j; i, j = i+1, j-1 {
 		trendData[i], trendData[j] = trendData[j], trendData[i]
 	}
