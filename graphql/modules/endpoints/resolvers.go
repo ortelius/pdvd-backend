@@ -439,37 +439,32 @@ func ResolveSyncedEndpoints(db database.DBConnection, limit int, org string) ([]
 	inventoryQuery := `
 		FOR endpoint IN endpoint
 			// Gate endpoint inclusion on having at least one release from the
-			// requested org. When org is "" all endpoints pass through.
+			// requested org. COLLECT first to deduplicate, then check org.
 			LET orgReleases = (
 				FOR sync IN sync
 					FILTER sync.endpoint_name == endpoint.name
-					FOR r IN release
-						FILTER r.name == sync.release_name
-						AND r.version == sync.release_version
-						AND (@org == "" OR LOWER(r.org) == LOWER(@org))
-						LIMIT 1
-						RETURN 1
+					COLLECT releaseName = sync.release_name INTO groups = sync
+					LET version = (
+						FOR s IN groups SORT s.synced_at DESC LIMIT 1 RETURN s.release_version
+					)[0]
+					LET r = (
+						FOR r IN release
+							FILTER r.name == releaseName AND r.version == version
+							LIMIT 1
+							RETURN r
+					)[0]
+					FILTER r != null AND (@org == "" OR LOWER(r.org) == LOWER(@org))
+					LIMIT 1
+					RETURN 1
 			)
 			FILTER @org == "" OR LENGTH(orgReleases) > 0
 			LIMIT @limit
 
-			// Services list is filtered to only the org's releases so that
-			// release_count and vulnerability counts reflect the org slice.
+			// Services list filtered to only the org's releases.
+			// Org filter applied AFTER COLLECT to avoid duplicates.
 			LET services = (
 				FOR sync IN sync
 					FILTER sync.endpoint_name == endpoint.name
-
-					// Only include sync records whose release belongs to the org.
-					LET releaseDoc = (
-						FOR r IN release
-							FILTER r.name == sync.release_name
-							AND r.version == sync.release_version
-							AND (@org == "" OR LOWER(r.org) == LOWER(@org))
-							LIMIT 1
-							RETURN r
-					)[0]
-					FILTER releaseDoc != null
-
 					COLLECT releaseName = sync.release_name INTO groups = sync
 
 					LET sortedSyncs = (
@@ -491,7 +486,9 @@ func ResolveSyncedEndpoints(db database.DBConnection, limit int, org string) ([]
 							RETURN r
 					)[0]
 
+					// Org filter applied here, after COLLECT, against the resolved doc
 					FILTER latestReleaseDoc != null
+					FILTER @org == "" OR LOWER(latestReleaseDoc.org) == LOWER(@org)
 
 					RETURN {
 						name: releaseName,
