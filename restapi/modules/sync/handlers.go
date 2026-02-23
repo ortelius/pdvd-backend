@@ -629,6 +629,7 @@ func createSyncRecords(ctx context.Context, db database.DBConnection, endpointNa
 	for name, version := range updatedReleases {
 		meta, err := fetchReleaseMetadata(ctx, db, name, version)
 		if err != nil {
+			fmt.Printf("[WARN] createSyncRecords: release not found in DB for name=%q version=%q, skipping sync record\n", name, version)
 			continue
 		}
 		syncDoc := buildSyncDocument(meta, endpointName, syncedAt)
@@ -646,10 +647,13 @@ func createSyncRecords(ctx context.Context, db database.DBConnection, endpointNa
 func fetchReleaseMetadata(ctx context.Context, db database.DBConnection, name, version string) (*ReleaseMetadata, error) {
 	query := `FOR r IN release FILTER r.name == @name && r.version == @version LIMIT 1 RETURN r`
 	cursor, err := db.Database.Query(ctx, query, &arangodb.QueryOptions{BindVars: map[string]interface{}{"name": name, "version": version}})
-	if err != nil || !cursor.HasMore() {
-		return nil, fmt.Errorf("not found")
+	if err != nil {
+		return nil, fmt.Errorf("fetchReleaseMetadata query error for name=%q version=%q: %w", name, version, err)
 	}
 	defer cursor.Close()
+	if !cursor.HasMore() {
+		return nil, fmt.Errorf("fetchReleaseMetadata: no release found for name=%q version=%q", name, version)
+	}
 	var meta ReleaseMetadata
 	cursor.ReadDocument(ctx, &meta)
 	return &meta, nil

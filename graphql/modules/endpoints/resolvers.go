@@ -421,8 +421,14 @@ func ResolveEndpointDetails(db database.DBConnection, endpointName string) (map[
 // ResolveSyncedEndpoints
 // ============================================================================
 
-// ResolveSyncedEndpoints fetches a list of endpoints that have been synced.
-// Now uses the same fetchReleaseVulnerabilities + countSeverities logic as
+// ResolveSyncedEndpoints fetches a list of endpoints that have been synced,
+// filtered to only include releases belonging to the requested org.
+// When org is provided:
+//   - Only endpoints running at least one release from that org are returned.
+//   - Each endpoint's services list only contains releases from that org,
+//     so release_count and vulnerability counts reflect the org slice only.
+//
+// Uses the same fetchReleaseVulnerabilities + countSeverities logic as
 // ResolveEndpointDetails to guarantee identical vulnerability counts.
 func ResolveSyncedEndpoints(db database.DBConnection, limit int, org string) ([]map[string]interface{}, error) {
 	ctx := context.Background()
@@ -432,47 +438,72 @@ func ResolveSyncedEndpoints(db database.DBConnection, limit int, org string) ([]
 	// ========================================================================
 	inventoryQuery := `
 		FOR endpoint IN endpoint
-			// Org filter on the endpoint itself — not on individual releases.
-			FILTER @org == "" OR LOWER(endpoint.org) == LOWER(@org)
+			// Gate endpoint inclusion on having at least one release from the
+			// requested org. When org is "" all endpoints pass through.
+			LET orgReleases = (
+				FOR sync IN sync
+					FILTER sync.endpoint_name == endpoint.name
+					FOR r IN release
+						FILTER r.name == sync.release_name
+						AND r.version == sync.release_version
+						AND (@org == "" OR LOWER(r.org) == LOWER(@org))
+						LIMIT 1
+						RETURN 1
+			)
+			FILTER @org == "" OR LENGTH(orgReleases) > 0
 			LIMIT @limit
-			
+
+			// Services list is filtered to only the org's releases so that
+			// release_count and vulnerability counts reflect the org slice.
 			LET services = (
 				FOR sync IN sync
 					FILTER sync.endpoint_name == endpoint.name
+
+					// Only include sync records whose release belongs to the org.
+					LET releaseDoc = (
+						FOR r IN release
+							FILTER r.name == sync.release_name
+							AND r.version == sync.release_version
+							AND (@org == "" OR LOWER(r.org) == LOWER(@org))
+							LIMIT 1
+							RETURN r
+					)[0]
+					FILTER releaseDoc != null
+
 					COLLECT releaseName = sync.release_name INTO groups = sync
-					
+
 					LET sortedSyncs = (
 						FOR s IN groups
 							SORT s.synced_at DESC
-							RETURN { 
-								version: s.release_version, 
-								synced_at: s.synced_at 
+							RETURN {
+								version: s.release_version,
+								synced_at: s.synced_at
 							}
 					)
-					
+
 					LET current = sortedSyncs[0]
 					LET previous = LENGTH(sortedSyncs) > 1 ? sortedSyncs[1] : null
 
-					LET releaseDoc = (
+					LET latestReleaseDoc = (
 						FOR r IN release
 							FILTER r.name == releaseName AND r.version == current.version
 							LIMIT 1
 							RETURN r
 					)[0]
 
-					FILTER releaseDoc != null
-					
+					FILTER latestReleaseDoc != null
+
 					RETURN {
 						name: releaseName,
 						current: current,
 						previous: previous
 					}
 			)
-			
+
 			FILTER LENGTH(services) > 0
-			
+
 			LET lastSync = MAX(services[*].current.synced_at)
-			
+
 			RETURN {
 				endpoint_name: endpoint.name,
 				endpoint_url: endpoint.name,
