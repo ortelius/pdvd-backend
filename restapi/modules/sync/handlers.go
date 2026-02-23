@@ -48,7 +48,7 @@ func PostSyncWithEndpoint(db database.DBConnection) fiber.Handler {
 		ctx := context.Background()
 
 		// Check if endpoint exists
-		endpointExists, err := checkEndpointExists(ctx, db, req.EndpointName)
+		endpointExists, err := checkEndpointExists(ctx, db, req.EndpointName, req.Endpoint.Org)
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 				"success": false,
@@ -225,10 +225,13 @@ func ProcessSync(
 	return nil
 }
 
-func checkEndpointExists(ctx context.Context, db database.DBConnection, endpointName string) (bool, error) {
-	query := `FOR e IN endpoint FILTER e.name == @name LIMIT 1 RETURN e`
+func checkEndpointExists(ctx context.Context, db database.DBConnection, endpointName, org string) (bool, error) {
+	query := `FOR e IN endpoint FILTER e.name == @name AND e.org == @org LIMIT 1 RETURN e`
 	cursor, err := db.Database.Query(ctx, query, &arangodb.QueryOptions{
-		BindVars: map[string]interface{}{"name": endpointName},
+		BindVars: map[string]interface{}{
+			"name": endpointName,
+			"org":  strings.ToLower(strings.TrimSpace(org)),
+		},
 	})
 	if err != nil {
 		return false, err
