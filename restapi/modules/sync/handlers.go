@@ -285,13 +285,17 @@ func createEndpoint(ctx context.Context, db database.DBConnection, req model.Syn
 	if req.Endpoint.ObjType == "" {
 		req.Endpoint.ObjType = "Endpoint"
 	}
+
+	// ParseAndSetNameComponents derives Shortname, Path, and IsPublic from
+	// endpoint.Name. Org is only written if not already set (see model/endpoint.go),
+	// so a caller-supplied Org such as the GKE sync namespace is preserved.
 	req.Endpoint.ParseAndSetNameComponents()
 
 	// Ensure the org exists before creating the endpoint so foreign-key-style
 	// references resolve correctly in the UI and GraphQL queries.
 	if req.Endpoint.Org != "" {
 		if err := ensureOrgExists(ctx, db, req.Endpoint.Org); err != nil {
-			// Non-fatal: log and continue — a missing org is better than a
+			// Non-fatal: log and continue. A missing org is better than a
 			// failed sync that leaves the endpoint uncreated.
 			fmt.Printf("[WARN] ensureOrgExists(%s): %v\n", req.Endpoint.Org, err)
 		}

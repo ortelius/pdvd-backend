@@ -62,15 +62,23 @@ func NewEndpoint() *Endpoint {
 	}
 }
 
-// ParseAndSetNameComponents parses the Name field and populates org, path, shortname, and is_public
+// ParseAndSetNameComponents parses the Name field and populates org, path, shortname, and is_public.
+// Org is only derived from the name if the caller has not already set it explicitly. This allows
+// callers such as the GKE sync function to supply a meaningful org (e.g. a namespace or mapped
+// org value) that is independent of the structural segments in the name (e.g. "cluster-2/kube-system"
+// has cluster name as parts[0], not the org).
 func (e *Endpoint) ParseAndSetNameComponents() {
 	parts := strings.Split(e.Name, "/")
 
 	if len(parts) > 1 {
-		e.Org = parts[0]
+		if e.Org == "" {
+			e.Org = parts[0]
+		}
 		e.Shortname = parts[1]
 	} else {
-		e.Org = "library"
+		if e.Org == "" {
+			e.Org = "library"
+		}
 		e.Shortname = e.Name
 	}
 

@@ -110,15 +110,22 @@ func NewProjectRelease() *ProjectRelease {
 	}
 }
 
-// ParseAndSetNameComponents parses the Name field and populates org, path, shortname, and is_public
+// ParseAndSetNameComponents parses the Name field and populates org, path, shortname, and is_public.
+// Org is only derived from the name if the caller has not already set it explicitly. This mirrors
+// the same policy as Endpoint.ParseAndSetNameComponents and prevents callers that supply a
+// meaningful org from having it silently overwritten by the first path segment of the name.
 func (r *ProjectRelease) ParseAndSetNameComponents() {
 	parts := strings.Split(r.Name, "/")
 
 	if len(parts) > 1 {
-		r.Org = parts[0]
+		if r.Org == "" {
+			r.Org = parts[0]
+		}
 		r.Shortname = parts[1]
 	} else {
-		r.Org = "library"
+		if r.Org == "" {
+			r.Org = "library"
+		}
 		r.Shortname = r.Name
 	}
 
