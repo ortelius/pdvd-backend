@@ -237,6 +237,44 @@ func checkEndpointExists(ctx context.Context, db database.DBConnection, endpoint
 	return cursor.HasMore(), nil
 }
 
+// ensureOrgExists creates an org document if one does not already exist.
+// The org name is normalized to lowercase for consistency with the RBAC system.
+// This is non-fatal: a warning is logged but endpoint creation continues on failure.
+func ensureOrgExists(ctx context.Context, db database.DBConnection, orgName string) error {
+	normalized := strings.ToLower(strings.TrimSpace(orgName))
+	if normalized == "" {
+		return nil
+	}
+
+	query := `FOR o IN orgs FILTER o.name == @name LIMIT 1 RETURN o`
+	cursor, err := db.Database.Query(ctx, query, &arangodb.QueryOptions{
+		BindVars: map[string]interface{}{"name": normalized},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to query org %s: %w", normalized, err)
+	}
+	defer cursor.Close()
+
+	if cursor.HasMore() {
+		return nil // already exists, nothing to do
+	}
+
+	org := model.Org{
+		Name:        normalized,
+		DisplayName: orgName, // preserve original casing for display
+		Description: "Auto-created by sync",
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+	_, err = db.Collections["orgs"].CreateDocument(ctx, org)
+	if err != nil {
+		return fmt.Errorf("failed to create org %s: %w", normalized, err)
+	}
+
+	fmt.Printf("[INFO] Auto-created org: %s\n", normalized)
+	return nil
+}
+
 func createEndpoint(ctx context.Context, db database.DBConnection, req model.SyncWithEndpoint) error {
 	if req.Endpoint.Name == "" || req.Endpoint.EndpointType == "" || req.Endpoint.Environment == "" {
 		return fmt.Errorf("endpoint not found: %s", req.EndpointName)
@@ -245,6 +283,17 @@ func createEndpoint(ctx context.Context, db database.DBConnection, req model.Syn
 		req.Endpoint.ObjType = "Endpoint"
 	}
 	req.Endpoint.ParseAndSetNameComponents()
+
+	// Ensure the org exists before creating the endpoint so foreign-key-style
+	// references resolve correctly in the UI and GraphQL queries.
+	if req.Endpoint.Org != "" {
+		if err := ensureOrgExists(ctx, db, req.Endpoint.Org); err != nil {
+			// Non-fatal: log and continue — a missing org is better than a
+			// failed sync that leaves the endpoint uncreated.
+			fmt.Printf("[WARN] ensureOrgExists(%s): %v\n", req.Endpoint.Org, err)
+		}
+	}
+
 	_, err := db.Collections["endpoint"].CreateDocument(ctx, req.Endpoint)
 	return err
 }
