@@ -10,7 +10,6 @@ require (
 	github.com/cenkalti/backoff v2.2.1+incompatible
 	github.com/go-git/go-git/v5 v5.16.5
 	github.com/gofiber/fiber/v2 v2.52.11
-	github.com/gofiber/fiber/v3 v3.0.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/osv-scanner v1.9.2
 	github.com/google/uuid v1.6.0
