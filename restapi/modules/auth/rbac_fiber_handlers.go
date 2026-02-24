@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/arangodb/go-driver/v2/arangodb"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/ortelius/pdvd-backend/v12/database"
 	"github.com/ortelius/pdvd-backend/v12/model"
 	"gopkg.in/yaml.v2"
@@ -18,7 +18,7 @@ import (
 
 // ApplyRBACFromBody applies RBAC config from request body (YAML only)
 func ApplyRBACFromBody(db database.DBConnection, emailConfig *EmailConfig) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		contentType := string(c.Request().Header.ContentType())
 
 		if !strings.Contains(contentType, "application/x-yaml") &&
@@ -69,7 +69,7 @@ func ApplyRBACFromBody(db database.DBConnection, emailConfig *EmailConfig) fiber
 
 // ValidateRBAC validates RBAC config without applying changes
 func ValidateRBAC(_ database.DBConnection) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		yamlContent := string(c.Body())
 		if yamlContent == "" {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -124,7 +124,7 @@ func buildInvitationLinks(invitations map[string]string, emailConfig *EmailConfi
 
 // ApplyRBACFromUpload applies RBAC config from uploaded file
 func ApplyRBACFromUpload(db database.DBConnection, emailConfig *EmailConfig) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		file, err := c.FormFile("file")
 		if err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "No file uploaded"})
@@ -157,12 +157,12 @@ func ApplyRBACFromUpload(db database.DBConnection, emailConfig *EmailConfig) fib
 
 // ApplyRBACFromFile applies RBAC config from filesystem
 func ApplyRBACFromFile(db database.DBConnection, emailConfig *EmailConfig) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		var req struct {
 			FilePath string `json:"file_path"`
 		}
 
-		if err := c.BodyParser(&req); err != nil {
+		if err := c.Bind().Body(&req); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
 		}
 
@@ -191,7 +191,7 @@ func ApplyRBACFromFile(db database.DBConnection, emailConfig *EmailConfig) fiber
 
 // GetRBACConfig exports current RBAC configuration from DB to YAML
 func GetRBACConfig(db database.DBConnection) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		config, err := ExportRBACConfig(db)
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to export config"})

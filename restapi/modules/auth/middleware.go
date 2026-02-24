@@ -2,7 +2,7 @@
 package auth
 
 import (
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/ortelius/pdvd-backend/v12/database"
 )
 
@@ -19,7 +19,7 @@ const (
 // RequireAuth middleware validates JWT token from cookie and blocks guests.
 // UPDATED: Now requires DB connection to look up user details (Role/Orgs) not present in JWT.
 func RequireAuth(db database.DBConnection) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		token := c.Cookies("auth_token")
 		if token == "" {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
@@ -57,7 +57,7 @@ func RequireAuth(db database.DBConnection) fiber.Handler {
 // This allows a single endpoint to serve both public and private data based on status.
 // UPDATED: Now requires DB connection to look up user details.
 func OptionalAuth(db database.DBConnection) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		token := c.Cookies("auth_token")
 		if token == "" {
 			c.Locals("is_authenticated", false)
@@ -92,7 +92,7 @@ func OptionalAuth(db database.DBConnection) fiber.Handler {
 
 // RequireRole middleware checks if user has one of the required roles
 func RequireRole(allowedRoles ...string) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		userRole, ok := c.Locals("role").(string)
 		if !ok {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{

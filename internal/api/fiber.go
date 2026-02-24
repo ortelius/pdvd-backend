@@ -5,11 +5,11 @@ import (
 	"log"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/compress"
-	"github.com/gofiber/fiber/v2/middleware/cors"
-	"github.com/gofiber/fiber/v2/middleware/logger"
-	fiberrecover "github.com/gofiber/fiber/v2/middleware/recover"
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/compress"
+	"github.com/gofiber/fiber/v3/middleware/cors"
+	"github.com/gofiber/fiber/v3/middleware/logger"
+	fiberrecover "github.com/gofiber/fiber/v3/middleware/recover"
 	"github.com/ortelius/pdvd-backend/v12/database"
 	"github.com/ortelius/pdvd-backend/v12/graphql"
 	"github.com/ortelius/pdvd-backend/v12/restapi"
@@ -34,22 +34,42 @@ func NewFiberApp(db database.DBConnection) *fiber.App {
 	app.Use(fiberrecover.New())
 	app.Use(compress.New(compress.Config{Level: compress.LevelBestSpeed}))
 
-	// Consolidated CORS Configuration
+	// Consolidated CORS Configuration - Updated for Fiber v3 []string requirements
 	app.Use(cors.New(cors.Config{
-		AllowOrigins:     "http://localhost:3000,http://localhost:4000,http://127.0.0.1:3000,http://127.0.0.1:4000",
-		AllowHeaders:     "Origin, Content-Type, Accept, Authorization, X-Requested-With",
+		AllowOrigins: []string{
+			"http://localhost:3000",
+			"http://localhost:4000",
+			"http://127.0.0.1:3000",
+			"http://127.0.0.1:4000",
+		},
+		AllowHeaders: []string{
+			"Origin",
+			"Content-Type",
+			"Accept",
+			"Authorization",
+			"X-Requested-With",
+		},
 		AllowCredentials: true,
-		AllowMethods:     "GET, POST, HEAD, PUT, DELETE, PATCH, OPTIONS",
+		AllowMethods: []string{
+			"GET",
+			"POST",
+			"HEAD",
+			"PUT",
+			"DELETE",
+			"PATCH",
+			"OPTIONS",
+		},
 	}))
 
-	app.Use(func(c *fiber.Ctx) error {
+	// Updated handler signature from fiber.Ctx to fiber.Ctx
+	app.Use(func(c fiber.Ctx) error {
 		c.Locals("graphql_op", "-")
 		return c.Next()
 	})
 	app.Use(logger.New())
 
-	// Health check endpoint
-	app.Get("/", func(c *fiber.Ctx) error {
+	// Health check endpoint - Updated handler signature from fiber.Ctx to fiber.Ctx
+	app.Get("/", func(c fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "healthy"})
 	})
 

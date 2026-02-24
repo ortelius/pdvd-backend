@@ -6,14 +6,14 @@ import (
 	"strings"
 
 	"github.com/arangodb/go-driver/v2/arangodb"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/ortelius/pdvd-backend/v12/database"
 	"github.com/ortelius/pdvd-backend/v12/model"
 )
 
 // ListRepos returns the list of repositories accessible to the user via App Installation
 func ListRepos(db database.DBConnection) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		username := c.Locals("username").(string)
 		ctx := c.Context()
 
@@ -53,10 +53,10 @@ func ListRepos(db database.DBConnection) fiber.Handler {
 
 // OnboardRepos processes the selected repositories using the App Installation Token
 func OnboardRepos(db database.DBConnection) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		username := c.Locals("username").(string)
 		var req OnboardRequest
-		if err := c.BodyParser(&req); err != nil {
+		if err := c.Bind().Body(&req); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid body"})
 		}
 

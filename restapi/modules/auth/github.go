@@ -9,24 +9,26 @@ import (
 	"os"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/ortelius/pdvd-backend/v12/database"
 )
 
 // GitHubLogin initiates the GitHub App Installation flow
-func GitHubLogin(c *fiber.Ctx) error {
+// UPDATED: Changed *fiber.Ctx to fiber.Ctx and used c.Redirect().To() for Fiber v3
+func GitHubLogin(c fiber.Ctx) error {
 	appName := os.Getenv("GITHUB_APP_NAME")
 	if appName == "" {
 		return c.Status(fiber.StatusInternalServerError).SendString("GITHUB_APP_NAME not configured")
 	}
 
 	installURL := fmt.Sprintf("https://github.com/apps/%s/installations/new", appName)
-	return c.Redirect(installURL)
+	return c.Redirect().To(installURL)
 }
 
 // GitHubCallback handles the callback from GitHub
+// UPDATED: Changed *fiber.Ctx to fiber.Ctx and used c.Redirect().To() for Fiber v3
 func GitHubCallback(db database.DBConnection) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		code := c.Query("code")
 		installationID := c.Query("installation_id") // Captured from App Install flow
 
@@ -76,12 +78,12 @@ func GitHubCallback(db database.DBConnection) fiber.Handler {
 		// Get Current User from Cookie
 		token := c.Cookies("auth_token")
 		if token == "" {
-			return c.Redirect("/?error=session_expired")
+			return c.Redirect().To("/?error=session_expired")
 		}
 
 		claims, err := ValidateJWT(token)
 		if err != nil {
-			return c.Redirect("/?error=session_expired")
+			return c.Redirect().To("/?error=session_expired")
 		}
 
 		username := claims.Username
@@ -89,7 +91,7 @@ func GitHubCallback(db database.DBConnection) fiber.Handler {
 		ctx := c.Context()
 		user, err := getUserByUsername(ctx, db, username)
 		if err != nil {
-			return c.Redirect("/?error=user_not_found")
+			return c.Redirect().To("/?error=user_not_found")
 		}
 
 		// Store Token and Installation ID
@@ -106,11 +108,10 @@ func GitHubCallback(db database.DBConnection) fiber.Handler {
 		}
 
 		// Redirect to Frontend Profile
-		// Uses BASE_URL env var (e.g., http://localhost:4000) or defaults to localhost:4000
 		frontendURL := os.Getenv("BASE_URL")
 		if frontendURL == "" {
 			frontendURL = "http://localhost:4000"
 		}
-		return c.Redirect(fmt.Sprintf("%s/profile?github_connected=true", frontendURL))
+		return c.Redirect().To(fmt.Sprintf("%s/profile?github_connected=true", frontendURL))
 	}
 }

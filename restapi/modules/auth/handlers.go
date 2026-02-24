@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/arangodb/go-driver/v2/arangodb"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/ortelius/pdvd-backend/v12/database"
 	"github.com/ortelius/pdvd-backend/v12/model"
 	"github.com/ortelius/pdvd-backend/v12/restapi/modules/github"
@@ -22,7 +22,7 @@ import (
 
 // Signup handles public user registration requests via GitOps flow
 func Signup(db database.DBConnection, emailConfig *EmailConfig) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		var req struct {
 			Username     string `json:"username"`
 			Email        string `json:"email"`
@@ -31,7 +31,7 @@ func Signup(db database.DBConnection, emailConfig *EmailConfig) fiber.Handler {
 			Organization string `json:"organization"`
 		}
 
-		if err := c.BodyParser(&req); err != nil {
+		if err := c.Bind().Body(&req); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"error": "Invalid request body",
 			})
@@ -152,9 +152,9 @@ func getOrgAdminEmail(ctx context.Context, db database.DBConnection, orgName str
 
 // Login handles user login and sets auth cookie
 func Login(db database.DBConnection) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		var req LoginRequest
-		if err := c.BodyParser(&req); err != nil {
+		if err := c.Bind().Body(&req); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
 		}
 
@@ -195,7 +195,7 @@ func Login(db database.DBConnection) fiber.Handler {
 
 // Logout clears the auth cookie
 func Logout() fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		c.Cookie(&fiber.Cookie{
 			Name:     "auth_token",
 			Value:    "",
@@ -212,7 +212,7 @@ func Logout() fiber.Handler {
 
 // Me returns current authenticated user info with strict GitHub validation
 func Me(db database.DBConnection) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		username, ok := c.Locals("username").(string)
 		if !ok {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Not authenticated"})
@@ -339,9 +339,9 @@ func validateGitHubUserToken(token string) (bool, error) {
 
 // ForgotPassword handles password reset requests
 func ForgotPassword(_ database.DBConnection) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		var req ForgotPasswordRequest
-		if err := c.BodyParser(&req); err != nil {
+		if err := c.Bind().Body(&req); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
 		}
 		return c.JSON(fiber.Map{"message": "Password reset email sent (not implemented yet)"})
@@ -350,7 +350,7 @@ func ForgotPassword(_ database.DBConnection) fiber.Handler {
 
 // ChangePassword handles password change
 func ChangePassword(db database.DBConnection) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		username, ok := c.Locals("username").(string)
 		if !ok {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Authentication required"})
@@ -361,7 +361,7 @@ func ChangePassword(db database.DBConnection) fiber.Handler {
 			NewPassword string `json:"new_password"`
 		}
 
-		if err := c.BodyParser(&req); err != nil {
+		if err := c.Bind().Body(&req); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
 		}
 
@@ -397,7 +397,7 @@ func ChangePassword(db database.DBConnection) fiber.Handler {
 
 // RefreshToken refreshes JWT token
 func RefreshToken(_ database.DBConnection) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		oldToken := c.Cookies("auth_token")
 		if oldToken == "" {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "No token to refresh"})
@@ -415,7 +415,7 @@ func RefreshToken(_ database.DBConnection) fiber.Handler {
 
 // ListUsers lists all users
 func ListUsers(db database.DBConnection) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		ctx := c.Context()
 		users, err := listUsers(ctx, db)
 		if err != nil {
@@ -443,7 +443,7 @@ func ListUsers(db database.DBConnection) fiber.Handler {
 
 // CreateUser creates a new user
 func CreateUser(db database.DBConnection) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		var req struct {
 			Username string   `json:"username"`
 			Email    string   `json:"email"`
@@ -452,7 +452,7 @@ func CreateUser(db database.DBConnection) fiber.Handler {
 			Orgs     []string `json:"orgs"`
 		}
 
-		if err := c.BodyParser(&req); err != nil {
+		if err := c.Bind().Body(&req); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
 		}
 
@@ -499,7 +499,7 @@ func CreateUser(db database.DBConnection) fiber.Handler {
 
 // GetUser retrieves a user by username
 func GetUser(db database.DBConnection) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		username := c.Params("username")
 		ctx := c.Context()
 
@@ -523,7 +523,7 @@ func GetUser(db database.DBConnection) fiber.Handler {
 
 // UpdateUser updates a user
 func UpdateUser(db database.DBConnection) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		username := c.Params("username")
 
 		var req struct {
@@ -533,7 +533,7 @@ func UpdateUser(db database.DBConnection) fiber.Handler {
 			IsActive *bool    `json:"is_active"`
 		}
 
-		if err := c.BodyParser(&req); err != nil {
+		if err := c.Bind().Body(&req); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
 		}
 
@@ -576,7 +576,7 @@ func UpdateUser(db database.DBConnection) fiber.Handler {
 
 // DeleteUser deletes a user
 func DeleteUser(db database.DBConnection) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		username := c.Params("username")
 		currentUser, ok := c.Locals("username").(string)
 		if ok && currentUser == username {
@@ -597,7 +597,7 @@ func DeleteUser(db database.DBConnection) fiber.Handler {
 // ============================================================================
 
 // SetAuthCookie sets the authentication cookie for a user session.
-func SetAuthCookie(c *fiber.Ctx, token string) {
+func SetAuthCookie(c fiber.Ctx, token string) {
 	c.Cookie(&fiber.Cookie{
 		Name:     "auth_token",
 		Value:    token,

@@ -11,7 +11,7 @@ import (
 
 	"github.com/go-git/go-git/v5"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/graphql-go/graphql"
 	"github.com/ortelius/pdvd-backend/v12/database"
 	"github.com/ortelius/pdvd-backend/v12/restapi/modules/auth"
@@ -101,7 +101,7 @@ func SetupRoutes(app *fiber.App, db database.DBConnection, schema graphql.Schema
 }
 
 func handleRBACWebhook(db database.DBConnection, emailConfig *auth.EmailConfig) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		yamlContent, err := syncRBACFromRepo()
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{

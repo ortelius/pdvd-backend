@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/ortelius/pdvd-backend/v12/database"
 	"gopkg.in/yaml.v2"
 )
@@ -31,7 +31,7 @@ type RBACApplyResponse struct {
 
 // HandleRBACApply handles POST /api/v1/rbac/apply
 func HandleRBACApply(db database.DBConnection) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		// Note: Auth checks are handled by middleware (RequireAuth, RequireRole)
 
 		var req RBACApplyRequest
@@ -39,7 +39,7 @@ func HandleRBACApply(db database.DBConnection) fiber.Handler {
 
 		switch {
 		case strings.Contains(contentType, "application/json"):
-			if err := c.BodyParser(&req); err != nil {
+			if err := c.Bind().Body(&req); err != nil {
 				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 					"success": false,
 					"error":   "Invalid JSON: " + err.Error(),
@@ -110,7 +110,7 @@ func HandleRBACApply(db database.DBConnection) fiber.Handler {
 
 // HandleRBACValidate handles POST /api/v1/rbac/validate
 func HandleRBACValidate(_ database.DBConnection) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		// Note: Auth checks are handled by middleware (RequireAuth, RequireRole)
 
 		body := c.Body()

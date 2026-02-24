@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net/url"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/ortelius/pdvd-backend/v12/database"
 )
 
@@ -20,7 +20,7 @@ func cleanToken(raw string) string {
 
 // GetInvitationHandler handles GET /api/v1/invitation/:token
 func GetInvitationHandler(db database.DBConnection) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		rawToken := c.Params("token")
 		token := cleanToken(rawToken)
 
@@ -57,9 +57,9 @@ type AcceptInvitationRequest struct {
 
 // AcceptInvitationHandler handles activation and immediate login
 func AcceptInvitationHandler(db database.DBConnection) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		var req AcceptInvitationRequest
-		if err := c.BodyParser(&req); err != nil {
+		if err := c.Bind().Body(&req); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid body"})
 		}
 
@@ -103,7 +103,7 @@ func AcceptInvitationHandler(db database.DBConnection) fiber.Handler {
 
 // ResendInvitationHandler handles POST /api/v1/invitation/:token/resend
 func ResendInvitationHandler(db database.DBConnection, emailConfig *EmailConfig) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		token := cleanToken(c.Params("token"))
 		if token == "" {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -127,7 +127,7 @@ func ResendInvitationHandler(db database.DBConnection, emailConfig *EmailConfig)
 
 // ListPendingInvitationsHandler handles GET /api/v1/admin/invitations (admin only)
 func ListPendingInvitationsHandler(db database.DBConnection) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		ctx := c.Context()
 
 		query := `

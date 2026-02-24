@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/arangodb/go-driver/v2/arangodb"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/google/osv-scanner/pkg/models"
 	"github.com/ortelius/pdvd-backend/v12/database"
 	"github.com/ortelius/pdvd-backend/v12/model"
@@ -93,11 +93,11 @@ func ProcessReleaseIngestion(ctx context.Context, db database.DBConnection, rel 
 // PostReleaseWithSBOM handles POST requests for creating a release with its SBOM.
 // It delegates core processing to ProcessReleaseIngestion.
 func PostReleaseWithSBOM(db database.DBConnection) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		var req model.ReleaseWithSBOM
 
 		// Parse request body
-		if err := c.BodyParser(&req); err != nil {
+		if err := c.Bind().Body(&req); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"success": false,
 				"message": "Invalid request body: " + err.Error(),
