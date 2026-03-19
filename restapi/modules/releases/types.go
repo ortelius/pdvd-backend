@@ -2,12 +2,16 @@
 package releases
 
 // ReleaseWithSBOMResponse returns the result of POST operations
+//
+//revive:disable-next-line:exported
 type ReleaseWithSBOMResponse struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
 }
 
 // ReleaseListItem represents a simplified release for list view
+//
+//revive:disable-next-line:exported
 type ReleaseListItem struct {
 	Key     string `json:"_key"`
 	Name    string `json:"name"`

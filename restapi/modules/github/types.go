@@ -4,6 +4,8 @@ package github
 import "time"
 
 // GitHubRepo represents a GitHub repository.
+//
+//revive:disable-next-line:exported
 type GitHubRepo struct {
 	ID          int    `json:"id"`
 	Name        string `json:"name"`
@@ -14,6 +16,8 @@ type GitHubRepo struct {
 }
 
 // GitHubRelease represents a GitHub release.
+//
+//revive:disable-next-line:exported
 type GitHubRelease struct {
 	Name        string    `json:"name"`
 	TagName     string    `json:"tag_name"`
@@ -22,6 +26,8 @@ type GitHubRelease struct {
 }
 
 // GitHubWorkflowRun represents a GitHub Actions workflow run.
+//
+//revive:disable-next-line:exported
 type GitHubWorkflowRun struct {
 	ID         int       `json:"id"`
 	Name       string    `json:"name"`

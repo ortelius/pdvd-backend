@@ -15,6 +15,8 @@ import (
 )
 
 // ReleaseProducer handles sending SBOM creation events to Kafka
+//
+//revive:disable-next-line:exported
 type ReleaseProducer struct {
 	Writer *kafka.Writer
 }
