@@ -17,7 +17,7 @@ import (
 	"github.com/ortelius/pdvd-backend/v12/restapi/modules/auth"
 	"github.com/ortelius/pdvd-backend/v12/restapi/modules/github"
 	"github.com/ortelius/pdvd-backend/v12/restapi/modules/releases"
-	"github.com/ortelius/pdvd-backend/v12/restapi/modules/sync"
+	"github.com/ortelius/pdvd-backend/v12/restapi/modules/releasesync"
 )
 
 // SetupRoutes configures all REST API routes and the GraphQL endpoint.
@@ -95,7 +95,7 @@ func SetupRoutes(app *fiber.App, db database.DBConnection, schema graphql.Schema
 
 	// Release & Sync
 	api.Post("/releases", auth.OptionalAuth(db), releases.PostReleaseWithSBOM(db))
-	api.Post("/sync", auth.OptionalAuth(db), sync.PostSyncWithEndpoint(db))
+	api.Post("/sync", auth.OptionalAuth(db), releasesync.PostSyncWithEndpoint(db))
 
 	log.Println("API routes initialized successfully")
 }

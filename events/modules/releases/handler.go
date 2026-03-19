@@ -16,6 +16,8 @@ type SBOMFetcher interface {
 }
 
 // ReleaseService defines the interface for release service operations.
+//
+//revive:disable-next-line:exported
 type ReleaseService interface {
 	CreateRelease(ctx context.Context, release model.ReleaseWithSBOM) error
 }

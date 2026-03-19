@@ -8,6 +8,8 @@ import (
 )
 
 // ReleaseSBOMCreatedEvent represents a release SBOM creation event published to Kafka.
+//
+//revive:disable-next-line:exported
 type ReleaseSBOMCreatedEvent struct {
 	EventType     string    `json:"event_type"`
 	EventID       string    `json:"event_id"`

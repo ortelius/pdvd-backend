@@ -1,5 +1,5 @@
 // Package sync defines the REST API types for sync operations.
-package sync
+package releasesync
 
 // Request represents the request body for creating a sync
 type Request struct {

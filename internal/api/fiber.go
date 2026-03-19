@@ -1,4 +1,6 @@
 // Package api provides HTTP server configuration and initialization for the PDVD backend.
+//
+//revive:disable-next-line:var-naming
 package api
 
 import (
