@@ -244,30 +244,36 @@ func Me(db database.DBConnection) fiber.Handler {
 						user.GitHubInstallationID = ""
 						installationValid = false
 					}
-				} else if isGitHubRevokedErr(err) {
-					// Installation revoked/uninstalled
-					user.GitHubInstallationID = ""
-					installationValid = false
 				} else {
-					// Network error - stay optimistic
-					installationValid = true
+					switch {
+					case isGitHubRevokedErr(err):
+						// Installation revoked/uninstalled
+						user.GitHubInstallationID = ""
+						installationValid = false
+					default:
+						// Network error - stay optimistic
+						installationValid = true
+					}
 				}
+
 			}
 
 			// Check user OAuth token
 			userTokenValid := false
 			if hasUserToken {
 				ok, err := validateGitHubUserToken(user.GitHubToken)
-				if err == nil && ok {
+				switch {
+				case err == nil && ok:
 					userTokenValid = true
-				} else if err == nil && !ok {
+				case err == nil && !ok:
 					// Token is revoked (401/403)
 					user.GitHubToken = ""
 					userTokenValid = false
-				} else {
+				default:
 					// Network error - assume still valid
 					userTokenValid = true
 				}
+
 			}
 
 			// Convert if-else chain to switch statement (gocritic fix)

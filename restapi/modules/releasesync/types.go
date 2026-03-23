@@ -1,4 +1,4 @@
-// Package sync defines the REST API types for sync operations.
+// Package releasesync defines the REST API types for sync operations.
 package releasesync
 
 // Request represents the request body for creating a sync

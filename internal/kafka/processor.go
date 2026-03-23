@@ -1,7 +1,9 @@
+// Package kafka provides Kafka event processing functionality for the PDVD backend.
 package kafka
 
 import (
 	"context"
+
 	"crypto/tls" // Add this
 	"log"
 	"os"
@@ -15,8 +17,11 @@ import (
 	"github.com/segmentio/kafka-go/sasl/plain" // Add this
 )
 
+// RunEventProcessor starts a Kafka event processor that listens for release events
+// and processes them using the provided database connection.
 func RunEventProcessor(ctx context.Context, db database.DBConnection) error {
 	brokersEnv := os.Getenv("KAFKA_BROKERS")
+
 	var brokers []string
 	if brokersEnv != "" {
 		brokers = strings.Split(brokersEnv, ",")

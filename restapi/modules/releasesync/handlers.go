@@ -1,4 +1,4 @@
-// Package sync implements the REST API handlers for sync operations.
+// Package releasesync implements the REST API handlers for sync operations.
 // STRATEGY: Partial Sync - Only sweep/resurrect releases in the sync payload
 package releasesync
 
