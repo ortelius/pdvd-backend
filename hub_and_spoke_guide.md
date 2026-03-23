@@ -86,7 +86,7 @@ graph LR
 Consider `CVE-2024-1234` affecting `lodash <4.17.21`:
 
 **Traditional Approach:**
-```
+```text
 CVE-2024-1234 → SBOM-payment-service-2.1.0
 CVE-2024-1234 → SBOM-frontend-app-1.3.0
 CVE-2024-1234 → SBOM-api-gateway-0.9.0
@@ -94,6 +94,7 @@ CVE-2024-1234 → SBOM-api-gateway-0.9.0
 ```
 
 **Hub-and-Spoke Approach:**
+
 ```
 CVE-2024-1234 → pkg:npm/lodash (hub)
 pkg:npm/lodash → SBOM-payment-service-2.1.0 (version: 4.17.20)

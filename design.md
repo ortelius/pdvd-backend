@@ -383,7 +383,7 @@ sequenceDiagram
 ```
 
 **Cookie Settings:**
-```
+```text
 Set-Cookie: auth_token=<jwt>; 
   HttpOnly; 
   Secure; 
@@ -391,6 +391,7 @@ Set-Cookie: auth_token=<jwt>;
   Path=/; 
   Max-Age=86400
 ```
+
 
 ### Middleware Chain
 
@@ -412,27 +413,28 @@ graph LR
 
 ### Permission Matrix
 
-| Resource | Owner | Admin | Editor | Viewer |
-|----------|-------|-------|--------|--------|
-| **Organizations** |
-| Create org | ✅ | ✅ | ❌ | ❌ |
-| Delete org | ✅ | ❌ | ❌ | ❌ |
-| Update org metadata | ✅ | ✅ | ❌ | ❌ |
-| **Users** |
-| Invite user | ✅ | ✅ | ❌ | ❌ |
-| Revoke user | ✅ | ✅ | ❌ | ❌ |
-| Assign roles | ✅ | ✅ | ❌ | ❌ |
-| **Releases** |
-| Upload release | ✅ | ✅ | ✅ | ❌ |
-| Delete release | ✅ | ✅ | ✅ | ❌ |
-| View releases | ✅ | ✅ | ✅ | ✅ |
-| **Endpoints** |
-| Create endpoint | ✅ | ✅ | ✅ | ❌ |
-| Sync deployment | ✅ | ✅ | ✅ | ❌ |
-| View endpoints | ✅ | ✅ | ✅ | ✅ |
-| **Dashboards** |
-| View org dashboard | ✅ | ✅ | ✅ | ✅ |
-| Export reports | ✅ | ✅ | ✅ | ✅ |
+| Resource            | Owner | Admin | Editor | Viewer |
+|---------------------|-------|-------|--------|--------|
+| **Organizations**   |       |       |        |        |
+| Create org          | ✅     | ✅     | ❌      | ❌      |
+| Delete org          | ✅     | ❌     | ❌      | ❌      |
+| Update org metadata | ✅     | ✅     | ❌      | ❌      |
+| **Users**           |       |       |        |        |
+| Invite user         | ✅     | ✅     | ❌      | ❌      |
+| Revoke user         | ✅     | ✅     | ❌      | ❌      |
+| Assign roles        | ✅     | ✅     | ❌      | ❌      |
+| **Releases**        |       |       |        |        |
+| Upload release      | ✅     | ✅     | ✅      | ❌      |
+| Delete release      | ✅     | ✅     | ✅      | ❌      |
+| View releases       | ✅     | ✅     | ✅      | ✅      |
+| **Endpoints**       |       |       |        |        |
+| Create endpoint     | ✅     | ✅     | ✅      | ❌      |
+| Sync deployment     | ✅     | ✅     | ✅      | ❌      |
+| View endpoints      | ✅     | ✅     | ✅      | ✅      |
+| **Dashboards**      |       |       |        |        |
+| View org dashboard  | ✅     | ✅     | ✅      | ✅      |
+| Export reports      | ✅     | ✅     | ✅      | ✅      |
+
 
 ---
 
@@ -1068,7 +1070,7 @@ stateDiagram-v2
 
 ### MTTR Calculation
 
-```
+```text
 MTTR (Mean Time To Remediate) = Average(days_to_remediate) for all remediated CVEs
 
 days_to_remediate = remediated_at - root_introduced_at
@@ -1078,6 +1080,7 @@ Where:
 - remediated_at = timestamp when fixed version was deployed
 - Only includes CVEs that are is_remediated = true
 ```
+
 
 ### SLA Compliance
 
@@ -1188,7 +1191,7 @@ graph TB
 
 ### Query Performance
 
-```
+```text
 Traditional Graph (N×M):
   Query: "Find all SBOMs affected by CVE-2024-1234"
   Complexity: O(M) = 10,000 edge traversals
@@ -1201,6 +1204,7 @@ Hub-and-Spoke (N+M):
 
 Speedup: 10x faster for typical queries
 ```
+
 
 ### PURL Hub Design
 

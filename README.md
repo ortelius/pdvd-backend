@@ -321,6 +321,7 @@ stateDiagram-v2
 | Concurrent Users | 100+         | ✅         |
 | Database Scale   | 1M+ releases | ✅         |
 
+
 ## 🛠️ Technology Stack
 
 - **Backend:** Go 1.21+, Fiber, GraphQL
