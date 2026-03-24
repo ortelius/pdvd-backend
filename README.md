@@ -1,4 +1,4 @@
-# PDVD — Post-Deployment Vulnerability Detection & Remediation
+# PDVD — Post-Deployment Vulnerability Remediation
 
 When a critical open source vulnerability is disclosed, most security teams face the same four questions in rapid succession — and struggle to answer any of them quickly:
 
@@ -102,18 +102,59 @@ If you still see zero CVEs after that, the most likely cause is that your SBOM w
 
 ## Read Your Dashboard
 
-The dashboard gives you four top-line numbers:
+The dashboard is organized into five sections. All metrics use a **rolling 180-day window** and reflect the **NIST Recommended SLA Policy** (Critical 15d · High 30d · Medium 90d · Low 180d) unless you configure a different policy.
 
-| Metric            | What it means                                                                                                         |
-|-------------------|-----------------------------------------------------------------------------------------------------------------------|
-| **MTTR**          | Mean time to remediate — average days from when a CVE was first detected to when it was fixed, rolling 180-day window |
-| **Mean Open Age** | Average age in days of all currently open CVEs across your endpoints                                                  |
-| **% Beyond SLA**  | Percentage of open CVEs that have exceeded their severity-based SLA target                                            |
-| **Backlog Delta** | New CVEs detected minus CVEs fixed in the period — negative is good                                                   |
+### Top Cards — Executive Summary
 
-The **by severity** breakdown (Critical / High / Medium / Low) gives you the same metrics segmented so you can see where to focus.
+Five cards give you the headline numbers at a glance:
 
-The **endpoint impact** section shows which of your production environments are carrying the most risk right now.
+| Card | What it means | Calculation |
+|---|---|---|
+| **Total New CVEs** | Total vulnerabilities detected within the rolling 180-day window | CVEs where Detected Date is within the last 180 days |
+| **Post-Deploy CVEs** | Currently open CVEs that were disclosed *after* the software was already deployed | Open CVEs where Disclosure Date > Deployment date |
+| **MTTR (Pre + Post Deploy)** | Average days to remediate across all endpoint CVEs fixed in the period | Σ(Fix Date − First Introduced Date) / Total Fixed CVEs |
+| **MTTR (Post-Deploy)** | Average days to remediate for post-deployment CVEs only | Σ(Fix Date − First Introduced Date) / Total Fixed Post-Deploy CVEs. Clock starts at `root_introduced_at` — the first known version where the CVE was present |
+| **% Open > SLA** | Percentage of open CVEs exceeding their severity-based SLA | (Count of Open CVEs > SLA / Total Open CVEs) × 100 |
+
+### Severity Breakdown & SLA Compliance
+
+A table segmented by Critical, High, Medium, and Low with six columns per row:
+
+| Column | What it means |
+|---|---|
+| **MTTR (Days)** | Σ(Fix − Detect) / Fixed — average remediation time for closed CVEs at this severity |
+| **MTTR (Post)** | Σ(Fix − Detect) / Post-deploy fixed — same but restricted to post-deployment CVEs |
+| **% Fixed in SLA** | (Fixed ≤ SLA / Total) × 100 — what fraction were resolved before the deadline |
+| **Mean Age** | Σ(Now − Detect) / Open — average age of currently open CVEs at this severity |
+| **Oldest** | Max open age — the single oldest unresolved CVE at this severity |
+| **% > SLA** | (Open > SLA / Total Open) × 100 — how many open CVEs have already breached the deadline |
+
+### Volume & Flow
+
+Shows the **Backlog Delta** — new CVEs detected minus CVEs fixed — broken out as a bar chart by severity (Critical, High, Medium, Low). Green bars are fixes; red bars are new CVEs. A rising red bar means risk is accumulating faster than it is being resolved. The aggregate delta number is shown top-right; positive means the backlog is growing.
+
+### Vulnerability Trend (180 Days)
+
+A stacked area chart showing open CVE counts per day for each severity band over the rolling window. Use this to spot when a new batch of vulnerabilities was introduced (a sudden step up) or when a remediation effort took effect (a step down). The x-axis is date; the y-axis is count of open CVEs. Each band is colour-coded: Critical (red), High (orange), Medium (yellow), Low (blue).
+
+### Security Velocity & Impact Metrics
+
+Four metric cards focused on operational effectiveness:
+
+| Metric | What it means | Calculation |
+|---|---|---|
+| **Fix Velocity** | CVEs remediated per week over the last 180 days | Fixed CVEs / 26 weeks |
+| **High-Risk Backlog** | Total open Critical + High CVEs right now | Count of open Critical + open High |
+| **Shift-Left Success** | Percentage of CVEs caught before they reached production | Pre-Deploy / (Pre-Deploy + Total) × 100 |
+| **SLA Burn Rate** | How many SLA deadlines are being breached per 30-day period | Open CVEs where (SLA − Age) < 30d |
+
+Three summary numbers appear at the bottom of this section:
+
+| Number | What it means |
+|---|---|
+| **CVE-Days Exposure** | Total accumulated exposure across all open CVEs — Σ(Mean Age) across all open CVEs. A high number means many CVEs have been open a long time. |
+| **Weeks to Clear** | Estimated weeks to resolve the current backlog at the current fix velocity — Open / Weekly Velocity |
+| **Risk Score** | Weighted sum of open CVEs by severity — Weighted Open (C×8 H×3 M×1 L×1) |
 
 ---
 
@@ -125,12 +166,12 @@ Each invited user receives an email with a link to set their password. Links exp
 
 When choosing a role, use the minimum necessary:
 
-| Role       | Can do                                                                                    |
-|------------|-------------------------------------------------------------------------------------------|
-| **Owner**  | Everything, including managing billing and deleting the org                               |
-| **Admin**  | Everything except billing — invite users, manage roles, access all resources              |
+| Role | Can do |
+|---|---|
+| **Owner** | Everything, including managing billing and deleting the org |
+| **Admin** | Everything except billing — invite users, manage roles, access all resources |
 | **Editor** | Upload releases, upload SBOMs, sync endpoints — the right role for CI/CD service accounts |
-| **Viewer** | Read-only — dashboards, CVE details, endpoint status                                      |
+| **Viewer** | Read-only — dashboards, CVE details, endpoint status |
 
 ---
 
@@ -139,11 +180,11 @@ When choosing a role, use the minimum necessary:
 SLA targets define how many days your team has to remediate a CVE before it counts as overdue. The clock starts when the CVE is first detected on a deployed endpoint.
 
 | Severity | Standard Endpoint | Mission-Critical Endpoint |
-|----------|-------------------|---------------------------|
-| Critical | 15 days           | 7 days                    |
-| High     | 30 days           | 15 days                   |
-| Medium   | 90 days           | 90 days                   |
-| Low      | 180 days          | 180 days                  |
+|---|---|---|
+| Critical | 15 days | 7 days |
+| High | 30 days | 15 days |
+| Medium | 90 days | 90 days |
+| Low | 180 days | 180 days |
 
 Endpoints with `endpoint_type: mission_asset` use the tighter targets in the right column.
 
@@ -151,19 +192,19 @@ Endpoints with `endpoint_type: mission_asset` use the tighter targets in the rig
 
 ## Glossary
 
-| Term                  | Definition                                                                                           |
-|-----------------------|------------------------------------------------------------------------------------------------------|
-| **CVE**               | Common Vulnerabilities and Exposures — a unique identifier for a known vulnerability                 |
-| **CVSS**              | Common Vulnerability Scoring System — a 0–10 severity score (9.0+ = Critical)                        |
-| **SBOM**              | Software Bill of Materials — a machine-readable inventory of every library your software depends on  |
-| **PURL**              | Package URL — a standardized identifier for a software package, e.g. `pkg:npm/lodash@4.17.20`        |
-| **MTTR**              | Mean Time To Remediate — average days from CVE detection to fix deployment                           |
-| **SLA**               | Service Level Agreement — the target number of days within which a CVE should be remediated          |
-| **Endpoint**          | A running environment where software is deployed (cluster, function, device)                         |
-| **Sync**              | The act of telling PDVD what versions are currently deployed to an endpoint                          |
-| **OSV**               | Open Source Vulnerabilities — the vulnerability database PDVD pulls from, refreshed every 15 minutes |
-| **OCI Attestation**   | An SBOM or other artifact attached directly to a container image in the registry                     |
-| **OpenSSF Scorecard** | An automated security health score (0–10) for open source repositories                               |
+| Term | Definition |
+|---|---|
+| **CVE** | Common Vulnerabilities and Exposures — a unique identifier for a known vulnerability |
+| **CVSS** | Common Vulnerability Scoring System — a 0–10 severity score (9.0+ = Critical) |
+| **SBOM** | Software Bill of Materials — a machine-readable inventory of every library your software depends on |
+| **PURL** | Package URL — a standardized identifier for a software package, e.g. `pkg:npm/lodash@4.17.20` |
+| **MTTR** | Mean Time To Remediate — average days from CVE detection to fix deployment |
+| **SLA** | Service Level Agreement — the target number of days within which a CVE should be remediated |
+| **Endpoint** | A running environment where software is deployed (cluster, function, device) |
+| **Sync** | The act of telling PDVD what versions are currently deployed to an endpoint |
+| **OSV** | Open Source Vulnerabilities — the vulnerability database PDVD pulls from, refreshed every 15 minutes |
+| **OCI Attestation** | An SBOM or other artifact attached directly to a container image in the registry |
+| **OpenSSF Scorecard** | An automated security health score (0–10) for open source repositories |
 
 ---
 
