@@ -511,20 +511,24 @@ func ResolveOrgAggregatedReleases(db database.DBConnection, severity string, use
 
 		FOR r IN release
 			FILTER filterPublic == true ? r.is_public == true : (LENGTH(userOrgs) == 0 OR r.org IN userOrgs)
-			
-			// Use an index scan that already orders by org, name, version_major DESC, version_minor DESC, version_patch DESC, version_prerelease ASC, version DESC
-			SORT r.org, r.name  // global grouping only
+
+			// Global sort for index-assisted traversal
+			SORT r.org, r.name
+
 			COLLECT org = r.org, name = r.name INTO groupedReleases = r
 
-			// Get top 2 versions per package using index-order
-			LET topVersions = (
+			// Get latest version per package using index-order
+			LET latest = (
 				FOR v IN groupedReleases
-					LIMIT 2
+					LIMIT 1
 					RETURN v
-			)
+			)[0]
 
-			LET latest = topVersions[0]
-			LET previous = LENGTH(topVersions) > 1 ? topVersions[1] : null
+			LET previous = (
+				FOR v IN groupedReleases
+					LIMIT 1, 1   // skip first, take second
+					RETURN v
+			)[0]
 
 			// -------- SBOM and dependency count --------
 			LET sbomData = FIRST(
@@ -532,6 +536,7 @@ func ResolveOrgAggregatedReleases(db database.DBConnection, severity string, use
 					LIMIT 1
 					RETURN s._id
 			)
+
 			LET dependency_count = sbomData != null
 				? LENGTH(
 					FOR edge IN sbom2purl
@@ -602,18 +607,21 @@ func ResolveOrgAggregatedReleases(db database.DBConnection, severity string, use
 						FILTER sc.severity == "CRITICAL"
 						RETURN sc.count
 			)
+
 			LET high = SUM(
 				FOR r IN rows
 					FOR sc IN r.severity_counts
 						FILTER sc.severity == "HIGH"
 						RETURN sc.count
 			)
+
 			LET medium = SUM(
 				FOR r IN rows
 					FOR sc IN r.severity_counts
 						FILTER sc.severity == "MEDIUM"
 						RETURN sc.count
 			)
+
 			LET low = SUM(
 				FOR r IN rows
 					FOR sc IN r.severity_counts
@@ -629,7 +637,7 @@ func ResolveOrgAggregatedReleases(db database.DBConnection, severity string, use
 
 			RETURN {
 				org_name: org2,
-				total_releases: LENGTH(topVersions),
+				total_releases: 1,  // only latest counted per org+name
 				total_versions,
 				total_vulnerabilities: SUM(rows[*].vulnerability_count),
 				critical_count: critical,
