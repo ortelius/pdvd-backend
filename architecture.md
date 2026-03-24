@@ -70,19 +70,19 @@ graph TB
 
 ## Technology Stack
 
-| Layer | Technology | Purpose |
-|---|---|---|
-| **API Framework** | Fiber v3 | High-performance HTTP server |
-| **GraphQL** | graphql-go | Query flexibility |
-| **Database** | ArangoDB 3.11+ | Graph + document store |
-| **Auth** | golang-jwt/jwt v5 | JWT generation/validation |
-| **Password** | bcrypt (DefaultCost) | Password hashing |
-| **CVE Data** | OSV.dev API | Vulnerability database, refreshed every 15 min |
-| **CVSS** | pandatix/go-cvss (3.1, 4.0) | Score calculation |
-| **Git** | go-git | GitOps RBAC integration |
-| **Email** | net/smtp | Invitation emails |
-| **Kafka** | segmentio/kafka-go | Async event processing |
-| **Version Parsing** | Masterminds/semver, go-npm-version, go-pep440-version | Ecosystem-specific version comparison |
+| Layer               | Technology                                            | Purpose                                        |
+|---------------------|-------------------------------------------------------|------------------------------------------------|
+| **API Framework**   | Fiber v3                                              | High-performance HTTP server                   |
+| **GraphQL**         | graphql-go                                            | Query flexibility                              |
+| **Database**        | ArangoDB 3.11+                                        | Graph + document store                         |
+| **Auth**            | golang-jwt/jwt v5                                     | JWT generation/validation                      |
+| **Password**        | bcrypt (DefaultCost)                                  | Password hashing                               |
+| **CVE Data**        | OSV.dev API                                           | Vulnerability database, refreshed every 15 min |
+| **CVSS**            | pandatix/go-cvss (3.1, 4.0)                           | Score calculation                              |
+| **Git**             | go-git                                                | GitOps RBAC integration                        |
+| **Email**           | net/smtp                                              | Invitation emails                              |
+| **Kafka**           | segmentio/kafka-go                                    | Async event processing                         |
+| **Version Parsing** | Masterminds/semver, go-npm-version, go-pep440-version | Ecosystem-specific version comparison          |
 
 ---
 
@@ -153,22 +153,22 @@ graph TB
 
 **Three edge collections do the work:**
 
-| Edge Collection | Direction | What the edge carries |
-|---|---|---|
-| `cve2purl` | CVE → PURL hub | Affected version range from OSV |
-| `sbom2purl` | SBOM → PURL hub | Exact installed version; semver components |
-| `release2cve` | Release → CVE | Package PURL, version — **pre-computed at ingest** |
+| Edge Collection | Direction       | What the edge carries                              |
+|-----------------|-----------------|----------------------------------------------------|
+| `cve2purl`      | CVE → PURL hub  | Affected version range from OSV                    |
+| `sbom2purl`     | SBOM → PURL hub | Exact installed version; semver components         |
+| `release2cve`   | Release → CVE   | Package PURL, version — **pre-computed at ingest** |
 
 ### Traditional vs Hub-and-Spoke
 
-| Metric | Traditional (direct edges) | Hub-and-Spoke |
-|---|---|---|
-| Edge count (1K CVEs, 10K SBOMs) | 10,000,000 | ~501,000 |
-| Edge storage | ~500 MB | ~25 MB |
-| Edge reduction | — | **99.89%** |
-| Query: CVE → all affected releases | O(M) scan ~30s | O(K) hub traversal ~3s |
-| Query: release → all CVEs | O(M) scan ~15s | Materialized edge <500ms |
-| Adding a new CVE | 10,000 edge writes | 1 hub edge write |
+| Metric                             | Traditional (direct edges) | Hub-and-Spoke            |
+|------------------------------------|----------------------------|--------------------------|
+| Edge count (1K CVEs, 10K SBOMs)    | 10,000,000                 | ~501,000                 |
+| Edge storage                       | ~500 MB                    | ~25 MB                   |
+| Edge reduction                     | —                          | **99.89%**               |
+| Query: CVE → all affected releases | O(M) scan ~30s             | O(K) hub traversal ~3s   |
+| Query: release → all CVEs          | O(M) scan ~15s             | Materialized edge <500ms |
+| Adding a new CVE                   | 10,000 edge writes         | 1 hub edge write         |
 
 ### Materialized `release2cve` Edges
 
@@ -205,12 +205,12 @@ Version matching runs at ingest time to decide which candidates become `release2
 
 PDVD uses **ecosystem-specific parsers** rather than a single generic semver parser because version schemes differ significantly across package ecosystems:
 
-| Ecosystem | Parser | Example version |
-|---|---|---|
-| npm | aquasecurity/go-npm-version | `4.17.20` |
-| PyPI | aquasecurity/go-pep440-version | `2.3.0rc1` |
-| Maven, Go, NuGet, others | Masterminds/semver | `1.2.3-SNAPSHOT` |
-| Fallback | String comparison | any |
+| Ecosystem                | Parser                         | Example version  |
+|--------------------------|--------------------------------|------------------|
+| npm                      | aquasecurity/go-npm-version    | `4.17.20`        |
+| PyPI                     | aquasecurity/go-pep440-version | `2.3.0rc1`       |
+| Maven, Go, NuGet, others | Masterminds/semver             | `1.2.3-SNAPSHOT` |
+| Fallback                 | String comparison              | any              |
 
 **Key rules that prevent false positives:**
 
@@ -224,13 +224,13 @@ Hub keys must be identical whether they come from a CVE record (OSV data) or an 
 
 The most important mapping is the Wolfi/Chainguard family, which OSV lists under ecosystem names that do not match the `apk` PURL type used by SBOM generators:
 
-| OSV Ecosystem | PURL type used for hub key |
-|---|---|
-| Alpine | `apk` |
-| Wolfi | `apk` |
-| Chainguard | `apk` |
-| Debian, Ubuntu | `deb` |
-| All others | lowercased ecosystem name |
+| OSV Ecosystem  | PURL type used for hub key |
+|----------------|----------------------------|
+| Alpine         | `apk`                      |
+| Wolfi          | `apk`                      |
+| Chainguard     | `apk`                      |
+| Debian, Ubuntu | `deb`                      |
+| All others     | lowercased ecosystem name  |
 
 Without this normalization, a CVE for a Wolfi package would create a hub under `pkg:wolfi/...` while the SBOM component creates a hub under `pkg:apk/...` — and the two would never connect.
 
@@ -248,16 +248,16 @@ Org names are normalized to **lowercase** throughout the system. `display_name` 
 
 User role is stored on the user document and is the **highest role** the user holds across all org memberships.
 
-```
+```text
 owner → admin → editor → viewer
 ```
 
-| Role | Key Permissions |
-|---|---|
-| **owner** | Full access + org deletion |
-| **admin** | Full access + user management |
+| Role       | Key Permissions                               |
+|------------|-----------------------------------------------|
+| **owner**  | Full access + org deletion                    |
+| **admin**  | Full access + user management                 |
 | **editor** | Upload releases, upload SBOMs, sync endpoints |
-| **viewer** | Read-only |
+| **viewer** | Read-only                                     |
 
 ### GitOps RBAC (Peribolos-style)
 
@@ -283,6 +283,7 @@ users:
 ```
 
 RBAC is applied at three points:
+
 1. **Startup** — clones `RBAC_REPO` (or reads `RBAC_CONFIG_PATH`) and applies
 2. **Webhook** — `POST /api/v1/rbac/webhook` triggers a fresh clone + apply
 3. **Direct API** — `POST /api/v1/rbac/apply/content` (YAML body) or `POST /api/v1/rbac/apply/upload` (file upload)
@@ -381,7 +382,7 @@ The same pipeline runs for releases ingested via Kafka (`release.sbom.created` e
 
 ### MTTR Calculation
 
-```
+```text
 MTTR = SUM(days_to_remediate) / COUNT(remediated CVEs in window)
 
 days_to_remediate = DATE_DIFF(root_introduced_at, remediated_at, "d")
@@ -392,11 +393,11 @@ Rolling window defaults to **180 days** based on `remediated_at` date.
 ### SLA Targets
 
 | Severity | Standard | `mission_asset` Endpoint |
-|---|---|---|
-| Critical | 15 days | 7 days |
-| High | 30 days | 15 days |
-| Medium | 90 days | 90 days |
-| Low | 180 days | 180 days |
+|----------|----------|--------------------------|
+| Critical | 15 days  | 7 days                   |
+| High     | 30 days  | 15 days                  |
+| Medium   | 90 days  | 90 days                  |
+| Low      | 180 days | 180 days                 |
 
 ### Two-Phase Snapshot Query Pattern
 
@@ -569,11 +570,13 @@ GITHUB_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\n..."
 Kafka enables asynchronous release ingestion — CI pipelines publish events to the `release-events` topic instead of calling the REST API directly.
 
 **Topic configuration:**
+
 - Topic name: `release-events`
 - Recommended: 3 partitions, 7-day retention
 - Consumer group: `pdvd-backend-worker`
 
 **Confluent Cloud (SASL/PLAIN + TLS):**
+
 ```bash
 KAFKA_BROKERS=pkc-abc123.us-east-1.aws.confluent.cloud:9092
 KAFKA_API_KEY=your-api-key
@@ -588,33 +591,33 @@ Event schema: see [Implementation Guide](implementation.md#kafka-event-schema).
 
 ## Environment Variables Reference
 
-| Variable | Default | Required | Description |
-|---|---|---|---|
-| `ARANGO_HOST` | `localhost` | Yes | ArangoDB hostname |
-| `ARANGO_PORT` | `8529` | No | ArangoDB port |
-| `ARANGO_USER` | `root` | No | ArangoDB username |
-| `ARANGO_PASS` | `mypassword` | Yes | ArangoDB password |
-| `ARANGO_URL` | derived | No | Full URL — overrides host+port |
-| `JWT_SECRET` | hardcoded default | **Yes** | Change in production |
-| `ADMIN_USERNAME` | `admin` | No | Bootstrap admin username |
-| `ADMIN_PASSWORD` | random | No | Bootstrap admin password — log output if not set |
-| `ADMIN_EMAIL` | `admin@example.com` | No | Bootstrap admin email |
-| `RBAC_REPO` | — | No | Git repo URL for RBAC config |
-| `RBAC_REPO_TOKEN` | — | No | Git token for RBAC repo access |
-| `RBAC_CONFIG_PATH` | `/etc/pdvd/rbac.yaml` | No | Local file fallback if no RBAC_REPO |
-| `SMTP_HOST` | `smtp.gmail.com` | No | SMTP server hostname |
-| `SMTP_PORT` | `587` | No | SMTP port |
-| `SMTP_USERNAME` | — | No | SMTP auth username |
-| `SMTP_PASSWORD` | — | No | SMTP auth password |
-| `SMTP_FROM_EMAIL` | `noreply@pdvd.com` | No | From address |
-| `SMTP_FROM_NAME` | `PDVD System` | No | From display name |
-| `BASE_URL` | `http://localhost:3000` | No | Used in invitation email links |
-| `GITHUB_APP_ID` | — | No | GitHub App numeric ID |
-| `GITHUB_APP_NAME` | — | No | GitHub App slug name |
-| `GITHUB_CLIENT_ID` | — | No | GitHub OAuth client ID |
-| `GITHUB_CLIENT_SECRET` | — | No | GitHub OAuth client secret |
-| `GITHUB_PRIVATE_KEY` | — | No | GitHub App RSA private key (PEM) |
-| `KAFKA_BROKERS` | `localhost:9092` | No | Comma-separated broker list |
-| `KAFKA_API_KEY` | — | No | Enables SASL/PLAIN + TLS when set |
-| `KAFKA_API_SECRET` | — | No | SASL password |
-| `MS_PORT` | `3000` | No | HTTP listen port |
+| Variable               | Default                 | Required | Description                                      |
+|------------------------|-------------------------|----------|--------------------------------------------------|
+| `ARANGO_HOST`          | `localhost`             | Yes      | ArangoDB hostname                                |
+| `ARANGO_PORT`          | `8529`                  | No       | ArangoDB port                                    |
+| `ARANGO_USER`          | `root`                  | No       | ArangoDB username                                |
+| `ARANGO_PASS`          | `mypassword`            | Yes      | ArangoDB password                                |
+| `ARANGO_URL`           | derived                 | No       | Full URL — overrides host+port                   |
+| `JWT_SECRET`           | hardcoded default       | **Yes**  | Change in production                             |
+| `ADMIN_USERNAME`       | `admin`                 | No       | Bootstrap admin username                         |
+| `ADMIN_PASSWORD`       | random                  | No       | Bootstrap admin password — log output if not set |
+| `ADMIN_EMAIL`          | `admin@example.com`     | No       | Bootstrap admin email                            |
+| `RBAC_REPO`            | —                       | No       | Git repo URL for RBAC config                     |
+| `RBAC_REPO_TOKEN`      | —                       | No       | Git token for RBAC repo access                   |
+| `RBAC_CONFIG_PATH`     | `/etc/pdvd/rbac.yaml`   | No       | Local file fallback if no RBAC_REPO              |
+| `SMTP_HOST`            | `smtp.gmail.com`        | No       | SMTP server hostname                             |
+| `SMTP_PORT`            | `587`                   | No       | SMTP port                                        |
+| `SMTP_USERNAME`        | —                       | No       | SMTP auth username                               |
+| `SMTP_PASSWORD`        | —                       | No       | SMTP auth password                               |
+| `SMTP_FROM_EMAIL`      | `noreply@pdvd.com`      | No       | From address                                     |
+| `SMTP_FROM_NAME`       | `PDVD System`           | No       | From display name                                |
+| `BASE_URL`             | `http://localhost:3000` | No       | Used in invitation email links                   |
+| `GITHUB_APP_ID`        | —                       | No       | GitHub App numeric ID                            |
+| `GITHUB_APP_NAME`      | —                       | No       | GitHub App slug name                             |
+| `GITHUB_CLIENT_ID`     | —                       | No       | GitHub OAuth client ID                           |
+| `GITHUB_CLIENT_SECRET` | —                       | No       | GitHub OAuth client secret                       |
+| `GITHUB_PRIVATE_KEY`   | —                       | No       | GitHub App RSA private key (PEM)                 |
+| `KAFKA_BROKERS`        | `localhost:9092`        | No       | Comma-separated broker list                      |
+| `KAFKA_API_KEY`        | —                       | No       | Enables SASL/PLAIN + TLS when set                |
+| `KAFKA_API_SECRET`     | —                       | No       | SASL password                                    |
+| `MS_PORT`              | `3000`                  | No       | HTTP listen port                                 |

@@ -1,4 +1,4 @@
-# PDVD — Post-Deployment Vulnerability Remediation
+# PDVD — Post-Deployment Vulnerability Detection & Remediation
 
 When a critical open source vulnerability is disclosed, most security teams face the same four questions in rapid succession — and struggle to answer any of them quickly:
 
@@ -104,12 +104,12 @@ If you still see zero CVEs after that, the most likely cause is that your SBOM w
 
 The dashboard gives you four top-line numbers:
 
-| Metric | What it means |
-|---|---|
-| **MTTR** | Mean time to remediate — average days from when a CVE was first detected to when it was fixed, rolling 180-day window |
-| **Mean Open Age** | Average age in days of all currently open CVEs across your endpoints |
-| **% Beyond SLA** | Percentage of open CVEs that have exceeded their severity-based SLA target |
-| **Backlog Delta** | New CVEs detected minus CVEs fixed in the period — negative is good |
+| Metric            | What it means                                                                                                         |
+|-------------------|-----------------------------------------------------------------------------------------------------------------------|
+| **MTTR**          | Mean time to remediate — average days from when a CVE was first detected to when it was fixed, rolling 180-day window |
+| **Mean Open Age** | Average age in days of all currently open CVEs across your endpoints                                                  |
+| **% Beyond SLA**  | Percentage of open CVEs that have exceeded their severity-based SLA target                                            |
+| **Backlog Delta** | New CVEs detected minus CVEs fixed in the period — negative is good                                                   |
 
 The **by severity** breakdown (Critical / High / Medium / Low) gives you the same metrics segmented so you can see where to focus.
 
@@ -125,12 +125,12 @@ Each invited user receives an email with a link to set their password. Links exp
 
 When choosing a role, use the minimum necessary:
 
-| Role | Can do |
-|---|---|
-| **Owner** | Everything, including managing billing and deleting the org |
-| **Admin** | Everything except billing — invite users, manage roles, access all resources |
+| Role       | Can do                                                                                    |
+|------------|-------------------------------------------------------------------------------------------|
+| **Owner**  | Everything, including managing billing and deleting the org                               |
+| **Admin**  | Everything except billing — invite users, manage roles, access all resources              |
 | **Editor** | Upload releases, upload SBOMs, sync endpoints — the right role for CI/CD service accounts |
-| **Viewer** | Read-only — dashboards, CVE details, endpoint status |
+| **Viewer** | Read-only — dashboards, CVE details, endpoint status                                      |
 
 ---
 
@@ -139,11 +139,11 @@ When choosing a role, use the minimum necessary:
 SLA targets define how many days your team has to remediate a CVE before it counts as overdue. The clock starts when the CVE is first detected on a deployed endpoint.
 
 | Severity | Standard Endpoint | Mission-Critical Endpoint |
-|---|---|---|
-| Critical | 15 days | 7 days |
-| High | 30 days | 15 days |
-| Medium | 90 days | 90 days |
-| Low | 180 days | 180 days |
+|----------|-------------------|---------------------------|
+| Critical | 15 days           | 7 days                    |
+| High     | 30 days           | 15 days                   |
+| Medium   | 90 days           | 90 days                   |
+| Low      | 180 days          | 180 days                  |
 
 Endpoints with `endpoint_type: mission_asset` use the tighter targets in the right column.
 
@@ -151,19 +151,19 @@ Endpoints with `endpoint_type: mission_asset` use the tighter targets in the rig
 
 ## Glossary
 
-| Term | Definition |
-|---|---|
-| **CVE** | Common Vulnerabilities and Exposures — a unique identifier for a known vulnerability |
-| **CVSS** | Common Vulnerability Scoring System — a 0–10 severity score (9.0+ = Critical) |
-| **SBOM** | Software Bill of Materials — a machine-readable inventory of every library your software depends on |
-| **PURL** | Package URL — a standardized identifier for a software package, e.g. `pkg:npm/lodash@4.17.20` |
-| **MTTR** | Mean Time To Remediate — average days from CVE detection to fix deployment |
-| **SLA** | Service Level Agreement — the target number of days within which a CVE should be remediated |
-| **Endpoint** | A running environment where software is deployed (cluster, function, device) |
-| **Sync** | The act of telling PDVD what versions are currently deployed to an endpoint |
-| **OSV** | Open Source Vulnerabilities — the vulnerability database PDVD pulls from, refreshed every 15 minutes |
-| **OCI Attestation** | An SBOM or other artifact attached directly to a container image in the registry |
-| **OpenSSF Scorecard** | An automated security health score (0–10) for open source repositories |
+| Term                  | Definition                                                                                           |
+|-----------------------|------------------------------------------------------------------------------------------------------|
+| **CVE**               | Common Vulnerabilities and Exposures — a unique identifier for a known vulnerability                 |
+| **CVSS**              | Common Vulnerability Scoring System — a 0–10 severity score (9.0+ = Critical)                        |
+| **SBOM**              | Software Bill of Materials — a machine-readable inventory of every library your software depends on  |
+| **PURL**              | Package URL — a standardized identifier for a software package, e.g. `pkg:npm/lodash@4.17.20`        |
+| **MTTR**              | Mean Time To Remediate — average days from CVE detection to fix deployment                           |
+| **SLA**               | Service Level Agreement — the target number of days within which a CVE should be remediated          |
+| **Endpoint**          | A running environment where software is deployed (cluster, function, device)                         |
+| **Sync**              | The act of telling PDVD what versions are currently deployed to an endpoint                          |
+| **OSV**               | Open Source Vulnerabilities — the vulnerability database PDVD pulls from, refreshed every 15 minutes |
+| **OCI Attestation**   | An SBOM or other artifact attached directly to a container image in the registry                     |
+| **OpenSSF Scorecard** | An automated security health score (0–10) for open source repositories                               |
 
 ---
 

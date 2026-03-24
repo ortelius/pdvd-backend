@@ -27,6 +27,7 @@ Authentication: JWT cookie (`auth_token`) set via `POST /auth/login`. Pass as `-
 ### Authentication Endpoints
 
 #### `POST /auth/login`
+
 ```json
 // Request
 { "username": "alice", "password": "secure-pass" }
@@ -40,9 +41,11 @@ Authentication: JWT cookie (`auth_token`) set via `POST /auth/login`. Pass as `-
 ```
 
 #### `POST /auth/logout`
+
 Clears the auth cookie. No request body required.
 
 #### `GET /auth/me`
+
 Returns current user info. Works with or without authentication (`OptionalAuth`).
 
 ```json
@@ -51,16 +54,19 @@ Returns current user info. Works with or without authentication (`OptionalAuth`)
 ```
 
 #### `POST /auth/change-password` (RequireAuth)
+
 ```json
 { "old_password": "...", "new_password": "..." }
 ```
 
 #### `POST /auth/refresh`
+
 Refreshes the JWT cookie using the existing cookie. No body required.
 
 ### Signup & Invitations
 
 #### `POST /signup` (Public)
+
 Creates a new user and org via the GitOps flow. Requires `RBAC_REPO` or `RBAC_CONFIG_PATH` to be configured.
 
 ```json
@@ -84,6 +90,7 @@ Creates a new user and org via the GitOps flow. Requires `RBAC_REPO` or `RBAC_CO
 ```
 
 #### `GET /invitation/:token`
+
 ```json
 // Response 200
 { "username": "alice", "email": "alice@acme.com", "role": "editor" }
@@ -93,6 +100,7 @@ Creates a new user and org via the GitOps flow. Requires `RBAC_REPO` or `RBAC_CO
 ```
 
 #### `POST /invitation/:token/accept`
+
 ```json
 // Request
 { "password": "newpassword", "password_confirm": "newpassword" }
@@ -102,11 +110,13 @@ Creates a new user and org via the GitOps flow. Requires `RBAC_REPO` or `RBAC_CO
 ```
 
 #### `POST /invitation/:token/resend`
+
 Resends the invitation email and extends expiry by 48 hours. No request body.
 
 ### Releases
 
 #### `POST /releases` (OptionalAuth)
+
 Uploads a release with its SBOM. Triggers PURL extraction and CVE linking.
 
 ```json
@@ -148,6 +158,7 @@ Uploads a release with its SBOM. Triggers PURL extraction and CVE linking.
 ### Sync
 
 #### `POST /sync` (OptionalAuth)
+
 Records the current deployment state of an endpoint.
 
 ```json
@@ -191,7 +202,7 @@ Records the current deployment state of an endpoint.
 
 ### User Management (RequireAuth + RequireRole("admin"))
 
-```
+```text
 GET    /users/                          List all users
 POST   /users/                          Create user directly (bypasses GitOps)
 GET    /users/:username                 Get user by username
@@ -201,7 +212,7 @@ DELETE /users/:username                 Delete user
 
 ### RBAC Management (RequireAuth + RequireRole("admin"))
 
-```
+```text
 POST   /rbac/apply/content              Apply YAML config from request body (Content-Type: application/x-yaml)
 POST   /rbac/apply/upload               Apply YAML config from multipart file upload
 POST   /rbac/apply                      Apply from filesystem path (JSON body: {"file_path": "/etc/pdvd/rbac.yaml"})
@@ -765,14 +776,14 @@ graph TD
 
 **Key traversal paths:**
 
-| Goal | Path |
-|---|---|
-| CVEs for a release (fast) | `release` →[release2cve]→ `cve` |
+| Goal                            | Path                                                                      |
+|---------------------------------|---------------------------------------------------------------------------|
+| CVEs for a release (fast)       | `release` →[release2cve]→ `cve`                                           |
 | CVEs for a release (full graph) | `release` →[release2sbom]→ `sbom` →[sbom2purl]→ `purl` ←[cve2purl]← `cve` |
-| Releases affected by a CVE | `cve` ←[release2cve]← `release` |
-| Packages in an SBOM | `sbom` →[sbom2purl]→ `purl` (version on edge) |
-| Active CVEs on an endpoint | `cve_lifecycle` filtered by `endpoint_name + is_remediated=false` |
-| Latest deployment state | `sync` grouped by `(endpoint_name, release_name)`, max `synced_at` |
+| Releases affected by a CVE      | `cve` ←[release2cve]← `release`                                           |
+| Packages in an SBOM             | `sbom` →[sbom2purl]→ `purl` (version on edge)                             |
+| Active CVEs on an endpoint      | `cve_lifecycle` filtered by `endpoint_name + is_remediated=false`         |
+| Latest deployment state         | `sync` grouped by `(endpoint_name, release_name)`, max `synced_at`        |
 
 **Solid arrows** = ArangoDB edge collections (graph traversal).
 **Dashed arrows** = logical relationships stored as fields or arrays (filtered in AQL, not traversed as graph edges).
@@ -780,6 +791,7 @@ graph TD
 ### Document Collections
 
 #### `release`
+
 ```json
 {
   "_key": "acme-payment-service_2.1.0",
@@ -802,6 +814,7 @@ graph TD
 ```
 
 #### `sbom`
+
 ```json
 {
   "_key": "...",
@@ -812,6 +825,7 @@ graph TD
 ```
 
 #### `purl` (Hub Node — version-free)
+
 ```json
 {
   "_key": "pkg:npm/lodash",
@@ -821,6 +835,7 @@ graph TD
 ```
 
 #### `cve`
+
 ```json
 {
   "_key": "CVE-2024-1234",
@@ -843,6 +858,7 @@ graph TD
 ```
 
 #### `endpoint`
+
 ```json
 {
   "_key": "prod-us-east-1",
@@ -856,6 +872,7 @@ graph TD
 ```
 
 #### `sync`
+
 ```json
 {
   "_key": "sync_prod-us-east-1_1733011200",
@@ -871,6 +888,7 @@ graph TD
 ```
 
 #### `cve_lifecycle`
+
 ```json
 {
   "_key": "...",
@@ -891,6 +909,7 @@ graph TD
 ```
 
 #### `users`
+
 ```json
 {
   "_key": "alice",
@@ -908,6 +927,7 @@ graph TD
 ```
 
 #### `invitations`
+
 ```json
 {
   "token": "tok_abc123",
@@ -922,6 +942,7 @@ graph TD
 ```
 
 #### `orgs`
+
 ```json
 {
   "_key": "acme",
@@ -935,6 +956,7 @@ graph TD
 ### Edge Collections
 
 #### `sbom2purl`
+
 ```json
 {
   "_from": "sbom/<key>",
@@ -949,6 +971,7 @@ graph TD
 ```
 
 #### `cve2purl`
+
 ```json
 {
   "_from": "cve/CVE-2024-1234",
@@ -957,6 +980,7 @@ graph TD
 ```
 
 #### `release2sbom`
+
 ```json
 {
   "_from": "release/<key>",
@@ -965,6 +989,7 @@ graph TD
 ```
 
 #### `release2cve` (Materialized)
+
 ```json
 {
   "_from": "release/<key>",
@@ -979,25 +1004,25 @@ graph TD
 
 ### Index Reference
 
-| Collection | Index Name | Fields | Unique |
-|---|---|---|---|
-| cve | package_name | affected[*].package.name | No |
-| cve | package_purl | affected[*].package.purl | No |
-| cve | cve_id | id | No |
-| sbom | sbom_contentsha | contentsha | No |
-| release | release_contentsha | contentsha | No |
-| release | release_org_name_version_order | org, name, version_major, version_minor, version_patch, version_prerelease, version | No |
-| purl | purl_idx | purl | **Yes** |
-| users | users_username | username | **Yes** |
-| users | users_email | email | **Yes** |
-| invitations | idx_token | token | **Yes** |
-| invitations | idx_invitation_username | username | No |
-| invitations | idx_expires_at | expires_at | No |
-| cve_lifecycle | lifecycle_cve_id | cve_id | No |
-| cve_lifecycle | lifecycle_remediated | is_remediated | No |
-| cve_lifecycle | lifecycle_endpoint_release_version | endpoint_name, release_name, introduced_version | No |
-| sync | sync_endpoint_release | endpoint_name, release_name | No |
-| sync | sync_release_name_version | release_name, release_version | No |
+| Collection    | Index Name                         | Fields                                                                              | Unique  |
+|---------------|------------------------------------|-------------------------------------------------------------------------------------|---------|
+| cve           | package_name                       | affected[*].package.name                                                            | No      |
+| cve           | package_purl                       | affected[*].package.purl                                                            | No      |
+| cve           | cve_id                             | id                                                                                  | No      |
+| sbom          | sbom_contentsha                    | contentsha                                                                          | No      |
+| release       | release_contentsha                 | contentsha                                                                          | No      |
+| release       | release_org_name_version_order     | org, name, version_major, version_minor, version_patch, version_prerelease, version | No      |
+| purl          | purl_idx                           | purl                                                                                | **Yes** |
+| users         | users_username                     | username                                                                            | **Yes** |
+| users         | users_email                        | email                                                                               | **Yes** |
+| invitations   | idx_token                          | token                                                                               | **Yes** |
+| invitations   | idx_invitation_username            | username                                                                            | No      |
+| invitations   | idx_expires_at                     | expires_at                                                                          | No      |
+| cve_lifecycle | lifecycle_cve_id                   | cve_id                                                                              | No      |
+| cve_lifecycle | lifecycle_remediated               | is_remediated                                                                       | No      |
+| cve_lifecycle | lifecycle_endpoint_release_version | endpoint_name, release_name, introduced_version                                     | No      |
+| sync          | sync_endpoint_release              | endpoint_name, release_name                                                         | No      |
+| sync          | sync_release_name_version          | release_name, release_version                                                       | No      |
 
 ---
 
@@ -1012,20 +1037,20 @@ All PURL hub keys are generated through a single pipeline in `util.GetStandardBa
 **Ecosystem type mapping:**
 
 | OSV Ecosystem | PURL Type |
-|---|---|
-| npm | npm |
-| PyPI | pypi |
-| Maven | maven |
-| Go | golang |
-| NuGet | nuget |
-| RubyGems | gem |
-| crates.io | cargo |
-| Packagist | composer |
-| Alpine | apk |
-| Wolfi | apk |
-| Chainguard | apk |
-| Debian | deb |
-| Ubuntu | deb |
+|---------------|-----------|
+| npm           | npm       |
+| PyPI          | pypi      |
+| Maven         | maven     |
+| Go            | golang    |
+| NuGet         | nuget     |
+| RubyGems      | gem       |
+| crates.io     | cargo     |
+| Packagist     | composer  |
+| Alpine        | apk       |
+| Wolfi         | apk       |
+| Chainguard    | apk       |
+| Debian        | deb       |
+| Ubuntu        | deb       |
 
 Wolfi and Chainguard map to `apk` so that CVEs from those OSV ecosystems match `pkg:apk/...` PURLs in SBOMs — without this mapping, Wolfi/Chainguard CVEs would never link.
 
@@ -1037,10 +1062,10 @@ Always call `util.GetStandardBasePURL()` or `util.GetBasePURLFromComponents()` f
 
 `util.IsVersionAffected(version string, affected models.Affected) bool` uses ecosystem-specific parsers:
 
-| Ecosystem | Parser |
-|---|---|
-| npm | aquasecurity/go-npm-version |
-| PyPI | aquasecurity/go-pep440-version |
+| Ecosystem  | Parser                                  |
+|------------|-----------------------------------------|
+| npm        | aquasecurity/go-npm-version             |
+| PyPI       | aquasecurity/go-pep440-version          |
 | All others | Masterminds/semver with string fallback |
 
 **Critical rules:**
@@ -1070,6 +1095,7 @@ Called at the end of every `ProcessReleaseIngestion`:
 Called for each release during `POST /sync`:
 
 **Sweep:**
+
 ```aql
 FOR doc IN cve_lifecycle
   FILTER doc.endpoint_name == @endpoint_name
@@ -1084,6 +1110,7 @@ FOR doc IN cve_lifecycle
 
 **Resurrect:**
 For each CVE in the new version, `CreateOrUpdateLifecycleRecord` checks if the exact `(cve_id, package, release_name, endpoint_name, introduced_version)` record already exists:
+
 - If it does, clear `is_remediated` and `remediated_at` (resurrection)
 - If it doesn't, create a new record and inherit `root_introduced_at` from the previous version's record if the same CVE was present there
 
