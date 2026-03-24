@@ -505,166 +505,142 @@ func ResolveOrgAggregatedReleases(db database.DBConnection, severity string, use
 	}
 
 	query := `
+		LET severityThreshold = @severityScore
+		LET filterPublic = @filter_by_public
+		LET userOrgs = @user_orgs
+
 		FOR r IN release
-			FILTER (
-				@filter_by_public == true ? (r.is_public == true) : 
-				(LENGTH(@user_orgs) == 0 OR r.org IN @user_orgs)
+			FILTER filterPublic == true ? r.is_public == true : (LENGTH(userOrgs) == 0 OR r.org IN userOrgs)
+			
+			// Use an index scan that already orders by org, name, version_major DESC, version_minor DESC, version_patch DESC, version_prerelease ASC, version DESC
+			SORT r.org, r.name  // global grouping only
+			COLLECT org = r.org, name = r.name INTO groupedReleases = r
+
+			// Get top 2 versions per package using index-order
+			LET topVersions = FIRSTN(
+				FOR v IN groupedReleases
+					LIMIT 2
+					RETURN v
 			)
-			COLLECT org = r.org INTO groupedReleases = r
-			
-			LET latestReleases = (
-				FOR release IN groupedReleases
-					COLLECT name = release.name INTO versions = release
-					LET latest = (
-						FOR v IN versions
-							SORT v.version_major != null ? v.version_major : -1 DESC,
-								v.version_minor != null ? v.version_minor : -1 DESC,
-								v.version_patch != null ? v.version_patch : -1 DESC,
-								v.version_prerelease != null && v.version_prerelease != "" ? 1 : 0 ASC,
-								v.version_prerelease ASC,
-								v.version DESC
-							LIMIT 1
-							RETURN v
-					)[0]
-					RETURN latest
+
+			LET latest = topVersions[0]
+			LET previous = LENGTH(topVersions) > 1 ? topVersions[1] : null
+
+			// -------- SBOM and dependency count --------
+			LET sbomData = FIRST(
+				FOR s IN 1..1 OUTBOUND latest release2sbom
+					LIMIT 1
+					RETURN s._id
 			)
-			
-			LET totalVersions = LENGTH(groupedReleases)
-			
-			LET aggregatedData = (
-				FOR latest IN latestReleases
-					LET sbomData = (
-						FOR s IN 1..1 OUTBOUND latest release2sbom
-							LIMIT 1
-							RETURN { id: s._id }
-					)[0]
-					
-					LET dependencyCount = (
-						FILTER sbomData != null
-						FOR edge IN sbom2purl
-							FILTER edge._from == sbomData.id
-							COLLECT fullPurl = edge.full_purl
-							RETURN 1
-					)
-					
-					LET syncCount = (
-						FOR sync IN sync
-							FILTER sync.release_name == latest.name 
-							AND sync.release_version == latest.version
-							COLLECT WITH COUNT INTO count
-							RETURN count
-					)[0]
-					
-					LET cveMatches = (
-						FOR cve, edge IN 1..1 OUTBOUND latest release2cve
-							FILTER @severityScore == 0.0 OR cve.database_specific.cvss_base_score >= @severityScore
-							RETURN {
-								cve_id: cve.id,
-								severity_score: cve.database_specific.cvss_base_score,
-								severity_rating: cve.database_specific.severity_rating,
-								package: edge.package_purl
-							}
-					)
-					
-					// FIX: Deduplicate (CVE+Package) matches FIRST
-					LET uniqueMatches = (
-						FOR match IN cveMatches
-							COLLECT cveId = match.cve_id, package = match.package INTO groups = match
-							// Since cveId is the same, the severity_rating will be the same for all in the group
-							LET severity = groups[0].severity_rating
-							RETURN { cveId, package, severity }
-					)
-					
-					// FIX: Calculate severity counts from the UNIQUE list, not the raw list
-					LET severityCounts = (
-						FOR match IN uniqueMatches
-							COLLECT severity = match.severity WITH COUNT INTO count
-							RETURN { severity, count }
-					)
-					
-					LET previousRelease = (
-						FOR release IN groupedReleases
-							FILTER release.name == latest.name AND release._key != latest._key
-							SORT release.version_major != null ? release.version_major : -1 DESC,
-								release.version_minor != null ? release.version_minor : -1 DESC,
-								release.version_patch != null ? release.version_patch : -1 DESC,
-								release.version_prerelease != null && release.version_prerelease != "" ? 1 : 0 ASC,
-								release.version_prerelease ASC,
-								release.version DESC
-							LIMIT 1
-							RETURN release
-					)[0]
-					
-					LET prevVulnCount = previousRelease != null ? (
-						LET prevCveMatches = (
-							FOR cve, edge IN 1..1 OUTBOUND previousRelease release2cve
-								RETURN { cve_id: cve.id, package: edge.package_purl }
-						)
-						LET prevUniqueInstances = (
-							FOR match IN prevCveMatches
-								COLLECT cveId = match.cve_id, package = match.package
-								RETURN 1
-						)
-						RETURN LENGTH(prevUniqueInstances)
-					)[0] : null
-					
+			LET dependency_count = sbomData != null
+				? LENGTH(
+					FOR edge IN sbom2purl
+						FILTER edge._from == sbomData
+						COLLECT fullPurl = edge.full_purl
+						RETURN 1
+				)
+				: 0
+
+			// -------- SYNC --------
+			LET synced_endpoint_count = FIRST(
+				FOR s IN sync
+					FILTER s.release_name == latest.name AND s.release_version == latest.version
+					COLLECT WITH COUNT INTO count
+					RETURN count
+			)
+
+			// -------- CVE matches --------
+			LET cveMatches = (
+				FOR cve, edge IN 1..1 OUTBOUND latest release2cve
+					FILTER severityThreshold == 0.0 OR cve.database_specific.cvss_base_score >= severityThreshold
 					RETURN {
-						dependency_count: LENGTH(dependencyCount),
-						synced_endpoint_count: syncCount,
-						vulnerability_count: LENGTH(uniqueMatches),
-						vulnerability_count_delta: prevVulnCount != null ? (LENGTH(uniqueMatches) - prevVulnCount) : null,
-						max_severity: LENGTH(cveMatches) > 0 ? MAX(cveMatches[*].severity_score) : 0,
-						scorecard_score: latest.openssf_scorecard_score,
-						severity_counts: severityCounts
+						cveId: cve.id,
+						package: edge.package_purl,
+						severity: cve.database_specific.severity_rating,
+						score: cve.database_specific.cvss_base_score
 					}
 			)
-			
-			LET criticalCount = SUM(
-				FOR data IN aggregatedData
-					FOR sc IN data.severity_counts
+
+			LET uniqueMatches = (
+				FOR m IN cveMatches
+					COLLECT cveId = m.cveId, package = m.package INTO g = m
+					LET severity = g[0].severity
+					RETURN { cveId, package, severity }
+			)
+
+			LET severity_counts = (
+				FOR m IN uniqueMatches
+					COLLECT severity = m.severity WITH COUNT INTO count
+					RETURN { severity, count }
+			)
+
+			// Previous release CVEs for delta calculation
+			LET prevVulnCount = previous != null
+				? LENGTH(
+					FOR cve, edge IN 1..1 OUTBOUND previous release2cve
+						COLLECT cveId = cve.id, package = edge.package_purl
+						RETURN 1
+				)
+				: null
+
+			LET row = {
+				dependency_count,
+				synced_endpoint_count,
+				vulnerability_count: LENGTH(uniqueMatches),
+				vulnerability_count_delta: prevVulnCount != null ? (LENGTH(uniqueMatches) - prevVulnCount) : null,
+				max_severity: LENGTH(cveMatches) > 0 ? MAX(cveMatches[*].score) : 0,
+				scorecard_score: latest.openssf_scorecard_score,
+				severity_counts
+			}
+
+			COLLECT org2 = org INTO rows = row
+			LET total_versions = LENGTH(rows)
+
+			LET critical = SUM(
+				FOR r IN rows
+					FOR sc IN r.severity_counts
 						FILTER sc.severity == "CRITICAL"
 						RETURN sc.count
 			)
-			
-			LET highCount = SUM(
-				FOR data IN aggregatedData
-					FOR sc IN data.severity_counts
+			LET high = SUM(
+				FOR r IN rows
+					FOR sc IN r.severity_counts
 						FILTER sc.severity == "HIGH"
 						RETURN sc.count
 			)
-			
-			LET mediumCount = SUM(
-				FOR data IN aggregatedData
-					FOR sc IN data.severity_counts
+			LET medium = SUM(
+				FOR r IN rows
+					FOR sc IN r.severity_counts
 						FILTER sc.severity == "MEDIUM"
 						RETURN sc.count
 			)
-			
-			LET lowCount = SUM(
-				FOR data IN aggregatedData
-					FOR sc IN data.severity_counts
+			LET low = SUM(
+				FOR r IN rows
+					FOR sc IN r.severity_counts
 						FILTER sc.severity == "LOW"
 						RETURN sc.count
 			)
-			
-			LET validScores = (FOR data IN aggregatedData FILTER data.scorecard_score != null AND data.scorecard_score > 0 RETURN data.scorecard_score)
-			
-			FILTER @severityScore == 0.0 OR SUM(aggregatedData[*].vulnerability_count) > 0
-			
+
+			LET validScores = (
+				FOR r IN rows
+					FILTER r.scorecard_score != null AND r.scorecard_score > 0
+					RETURN r.scorecard_score
+			)
+
 			RETURN {
-				org_name: org,
-				total_releases: LENGTH(latestReleases),
-				total_versions: totalVersions,
-				total_vulnerabilities: SUM(aggregatedData[*].vulnerability_count),
-				critical_count: criticalCount,
-				high_count: highCount,
-				medium_count: mediumCount,
-				low_count: lowCount,
-				max_severity_score: MAX(aggregatedData[*].max_severity),
+				org_name: org2,
+				total_releases: LENGTH(topVersions),
+				total_versions,
+				total_vulnerabilities: SUM(rows[*].vulnerability_count),
+				critical_count: critical,
+				high_count: high,
+				medium_count: medium,
+				low_count: low,
+				max_severity_score: MAX(rows[*].max_severity),
 				avg_scorecard_score: LENGTH(validScores) > 0 ? AVG(validScores) : null,
-				total_dependencies: SUM(aggregatedData[*].dependency_count),
-				synced_endpoint_count: SUM(aggregatedData[*].synced_endpoint_count),
-				vulnerability_count_delta: SUM(aggregatedData[*].vulnerability_count_delta)
+				total_dependencies: SUM(rows[*].dependency_count),
+				synced_endpoint_count: SUM(rows[*].synced_endpoint_count),
+				vulnerability_count_delta: SUM(rows[*].vulnerability_count_delta)
 			}
 	`
 

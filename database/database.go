@@ -226,10 +226,22 @@ func InitializeDatabase() DBConnection {
 		{Collection: "sbom", IdxName: "sbom_contentsha", IdxField: []string{"contentsha"}, Unique: false},
 		{Collection: "release", IdxName: "release_contentsha", IdxField: []string{"contentsha"}, Unique: false},
 
+		// Composite index for latest version retrieval per org + name
+		{Collection: "release", IdxName: "release_org_name_version_order",
+			IdxField: []string{
+				"org",
+				"name",
+				"version_major",
+				"version_minor",
+				"version_patch",
+				"version_prerelease",
+				"version",
+			}, Unique: false},
+
 		// PURL unique index
 		{Collection: "purl", IdxName: "purl_idx", IdxField: []string{"purl"}, Unique: true},
 
-		// New User Management Indexes
+		// User Management Indexes
 		{Collection: "users", IdxName: "users_username", IdxField: []string{"username"}, Unique: true},
 		{Collection: "users", IdxName: "users_email", IdxField: []string{"email"}, Unique: true},
 		{Collection: "invitations", IdxName: "idx_token", IdxField: []string{"token"}, Unique: true},
@@ -239,16 +251,16 @@ func InitializeDatabase() DBConnection {
 		// CVE Lifecycle indexes
 		{Collection: "cve_lifecycle", IdxName: "lifecycle_cve_id", IdxField: []string{"cve_id"}, Unique: false},
 		{Collection: "cve_lifecycle", IdxName: "lifecycle_remediated", IdxField: []string{"is_remediated"}, Unique: false},
-
-		// Composite index for vulnerability trend query — avoids full collection
-		// scan when joining cve_lifecycle against active (endpoint, release, version) tuples
 		{Collection: "cve_lifecycle", IdxName: "lifecycle_endpoint_release_version",
 			IdxField: []string{"endpoint_name", "release_name", "introduced_version"}, Unique: false},
 
-		// Composite index for sync snapshot lookups — allows ArangoDB to satisfy
-		// the COLLECT + MAX(synced_at) aggregation without a full collection scan
+		// Sync indexes
+		// Composite index including endpoint_name for optimized queries
 		{Collection: "sync", IdxName: "sync_endpoint_release",
 			IdxField: []string{"endpoint_name", "release_name"}, Unique: false},
+		// Exact index for release_name + release_version (matches old db.sync.ensureIndex)
+		{Collection: "sync", IdxName: "sync_release_name_version",
+			IdxField: []string{"release_name", "release_version"}, Unique: false},
 	}
 
 	for _, idx := range idxList {
