@@ -517,7 +517,7 @@ func ResolveOrgAggregatedReleases(db database.DBConnection, severity string, use
 			COLLECT org = r.org, name = r.name INTO groupedReleases = r
 
 			// Get top 2 versions per package using index-order
-			LET topVersions = FIRSTN(
+			LET topVersions = (
 				FOR v IN groupedReleases
 					LIMIT 2
 					RETURN v
