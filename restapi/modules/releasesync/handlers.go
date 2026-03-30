@@ -627,6 +627,19 @@ func createSyncRecords(ctx context.Context, db database.DBConnection, endpointNa
 	updatedReleases map[string]string, syncedAt time.Time, results []ReleaseResult) (int, error) {
 	count := 0
 	for name, version := range updatedReleases {
+		// --- ADD THIS CHECK TO PREVENT POD RESTART DUPLICATES ---
+		isUnchanged := false
+		for _, res := range results {
+			if res.Name == name && res.Version == version && res.Status == "unchanged" {
+				isUnchanged = true
+				break
+			}
+		}
+		if isUnchanged {
+			continue // Skip creating a sync record for this pod restart
+		}
+		// --------------------------------------------------------
+
 		meta, err := fetchReleaseMetadata(ctx, db, name, version)
 		if err != nil {
 			fmt.Printf("[WARN] createSyncRecords: release not found in DB for name=%q version=%q, skipping sync record\n", name, version)
