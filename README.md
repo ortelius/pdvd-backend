@@ -1,4 +1,4 @@
-# PDVD — Post-Deployment Vulnerability Remediation
+# Getting Started
 
 When a critical open source vulnerability is disclosed, most security teams face the same four questions in rapid succession — and struggle to answer any of them quickly:
 
@@ -11,7 +11,7 @@ PDVD answers all four questions in a single platform. It ingests your Software B
 
 ---
 
-## Get Started (Hosted)
+## TLDR; (Hosted)
 
 The fastest way to get started is the hosted version at **[app.deployhub.com](https://app.deployhub.com)** — no infrastructure setup required.
 
@@ -61,7 +61,18 @@ After a few minutes, go to your dashboard. You should see:
 - An OpenSSF Scorecard score on each release
 - GitHub Actions listed as an endpoint under **Endpoints**
 
-If a repository shows zero vulnerabilities, see [Why Am I Seeing Zero CVEs?](#why-am-i-seeing-zero-cves) below.
+#### Why Am I Seeing Zero CVEs?
+
+Two things must be true before vulnerabilities appear:
+
+1. **A release with a valid SBOM has been imported** — components need properly formatted PURLs for CVE matching to work
+2. **That release has been synced to at least one endpoint** — the scanner records GitHub Actions runs as endpoints automatically
+
+CVE data is refreshed from OSV.dev every 15 minutes. If you just connected GitHub and see nothing yet, wait a few minutes and refresh.
+
+If you still see zero CVEs after that, the most likely cause is that your SBOM was not found or was generated from an image that uses an unsupported ecosystem. Check that your container image is publicly accessible or that the GitHub App has the appropriate registry access. Components with missing or malformed PURLs are silently skipped during CVE matching.
+
+---
 
 ### Getting the Best Results
 
@@ -84,19 +95,6 @@ If you already produce SBOMs via Syft, Trivy, or any CycloneDX-compatible tool a
 **Supported ecosystems for CVE matching:** npm, PyPI, Maven, Go, NuGet, RubyGems, cargo (crates.io), Composer, apk (Alpine/Wolfi), deb (Debian/Ubuntu)
 
 > **Using a different CI system or want direct API access?** See the [Implementation Guide](docs/implementation.md) for REST API reference.
-
----
-
-## Why Am I Seeing Zero CVEs?
-
-Two things must be true before vulnerabilities appear:
-
-1. **A release with a valid SBOM has been imported** — components need properly formatted PURLs for CVE matching to work
-2. **That release has been synced to at least one endpoint** — the scanner records GitHub Actions runs as endpoints automatically
-
-CVE data is refreshed from OSV.dev every 15 minutes. If you just connected GitHub and see nothing yet, wait a few minutes and refresh.
-
-If you still see zero CVEs after that, the most likely cause is that your SBOM was not found or was generated from an image that uses an unsupported ecosystem. Check that your container image is publicly accessible or that the GitHub App has the appropriate registry access. Components with missing or malformed PURLs are silently skipped during CVE matching.
 
 ---
 

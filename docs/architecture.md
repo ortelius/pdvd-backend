@@ -1,4 +1,4 @@
-# PDVD Architecture Guide
+# Architecture Guide
 
 **Audience:** Platform engineers, infrastructure teams, and security reviewers deploying or evaluating PDVD on-premises.
 

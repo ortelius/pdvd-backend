@@ -1,4 +1,4 @@
-# PDVD Implementation Guide
+# Implementation Guide
 
 **Audience:** Backend engineers integrating the PDVD API, writing GraphQL queries, or contributing to the codebase.
 
