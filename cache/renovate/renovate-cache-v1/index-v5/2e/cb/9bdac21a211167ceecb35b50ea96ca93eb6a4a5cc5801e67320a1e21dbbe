@@ -1,2 +1,2 @@
 
-8f3cf8c5836492cc48290ffaab3ea94b08c63850	{"key":"datasource-docker-digest-cache-decorator:https://cgr.dev:chainguard/go:latest@sha256:4c46f9d9b13be19701f74b4b3cfd9e2db441c0589b74f94d5d5fac27bd0efb46","integrity":"sha512-8fWv6IeTKjzt6mBwTIcU+vUfJEYlj4VPYeCxG9NOM5linLjLuNYr2FZrJGGoQG6bp9jeopm6y7pU0Ix6d3nkoQ==","time":1775235843114,"size":213}
+dca59ba6883ee81b21ea3f8a829bd6caac0e3ec6	{"key":"datasource-docker-digest-cache-decorator:https://cgr.dev:chainguard/go:latest@sha256:4c46f9d9b13be19701f74b4b3cfd9e2db441c0589b74f94d5d5fac27bd0efb46","integrity":"sha512-FmM+KA8tscF/SacgoU4qSkJAMvv/1XU92yYTbG5zHuA1UT+NK5Upkk930/0XOEOFxWv+cd/O6PxgFwvWy4nbPg==","time":1775236423253,"size":213}
