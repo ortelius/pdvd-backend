@@ -1,2 +1,2 @@
 
-64eb562af5884b18b6f17021c2bb075497cabe6c	{"key":"datasource-go-cache-decorator:getReleases:github.com/Masterminds/semver/v3","integrity":"sha512-/Ukq4xug3sZKtMSPLRpIcK5jnvqDeI2XcgYG4qmcc9j8wSYC7AXUvWpbqoYWLmmQof+PxNw8Hm2k/o1lVLcZWw==","time":1775236632531,"size":437}
+006c0fc37ebead10b8681ad62b78b6b1ea03cd10	{"key":"datasource-go-cache-decorator:getReleases:github.com/Masterminds/semver/v3","integrity":"sha512-adx0GEUw5NdOfqUX5mwwRgi4PaO2Xb3TOg9rRFFblqG5jEvbJvpbDimocsa+uPN0zFDoivWQOVT7rJWfm67Z6Q==","time":1775237248513,"size":433}
