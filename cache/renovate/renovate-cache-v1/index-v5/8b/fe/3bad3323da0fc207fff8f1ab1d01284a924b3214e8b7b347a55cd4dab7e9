@@ -1,2 +1,2 @@
 
-df3e19410ce77cdac3cb9f890226823910fe613c	{"key":"datasource-go-cache-decorator:getReleases:github.com/google/osv-scanner","integrity":"sha512-9UWJZbxh1e3xw7oZ5xlap6vBum4O8amMwTZv5Nl+D/cFGn57t/zeLAn2TkbCnG7TUewdXPYkVjvBuWFs3eHUKw==","time":1775295629276,"size":1113}
+9c0247ad32e1cf0ca6ce39db839ec0b2a644497d	{"key":"datasource-go-cache-decorator:getReleases:github.com/google/osv-scanner","integrity":"sha512-gMwepV4LCZhBZkU6MAeNxa9SU5Qe54d5mqUlfFsda0Ob93DOqV1+KTZkicrneUf4eVkditXIIyqO69mk3vRvxg==","time":1775377091032,"size":1117}
