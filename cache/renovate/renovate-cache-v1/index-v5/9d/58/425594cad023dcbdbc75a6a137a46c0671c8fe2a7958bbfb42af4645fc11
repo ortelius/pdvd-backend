@@ -1,2 +1,2 @@
 
-f3fbd64e6806c31da08a3cc2b335d8ddb41bbaba	{"key":"datasource-docker-digest-cache-decorator:https://cgr.dev:chainguard/glibc-dynamic:latest@sha256:4fd32c47d5d83cb2bc5045f6d2a76458fb3a68c148ddc32841e452df5afe0279","integrity":"sha512-YyQp27zmnuux/W7rzm0/+DtCe35S2McbcNcMmjCEKzJdpmnfiuhcQuYro5sOxHuHo9L9jKtJFOrD8WruEQ/S7g==","time":1775464745244,"size":213}
+bf3f947a98f4620d15be36d2ac4b34f781de8216	{"key":"datasource-docker-digest-cache-decorator:https://cgr.dev:chainguard/glibc-dynamic:latest@sha256:4fd32c47d5d83cb2bc5045f6d2a76458fb3a68c148ddc32841e452df5afe0279","integrity":"sha512-SfQ21zqs1S5qTdZSSP/pAbRD+0R6jFXbsIvbeBZl6qLw8TlShjTRc+d2D5VzJcvu7BYzrbLg3c5M5NWmcLhytg==","time":1775550815223,"size":209}
