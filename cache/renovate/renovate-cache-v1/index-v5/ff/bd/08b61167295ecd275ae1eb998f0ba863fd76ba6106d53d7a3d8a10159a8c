@@ -1,2 +1,2 @@
 
-d98338a6fdfe1665ddb5e6908945ddaea2205ae4	{"key":"datasource-docker-labels-cache-decorator:https://index.docker.io:library/arangodb:latest","integrity":"sha512-UdVFtO/lKiowHk/84HWHw0jG1bObkok//E286kw6Hw/qkBAdqRG+gvIsoveCsmYNNWc6de2g/kG5k5qrECjGBg==","time":1775637182490,"size":141}
+ac02150bdcaf16ca9577a600d4c42e7b4dc53e94	{"key":"datasource-docker-labels-cache-decorator:https://index.docker.io:library/arangodb:latest","integrity":"sha512-e7QkdYBz8UbUYLN79ML+BGic+eD3uFWfnTNnGCgJP2JwyiOiCsZIn4mIJynby0xN6z0qj30Sx0GS6cH9plYQtQ==","time":1775723969861,"size":141}
